@@ -134,3 +134,14 @@ public extension FalClient {
         ))
     }
 }
+
+// Typealiases to expose core service contracts under the FalClient namespace.
+public typealias FalClientStorage = Storage
+public typealias FalClientRealtime = Realtime
+public typealias FalClientQueue = Queue
+
+public extension FalClient {
+    typealias Storage = FalClientStorage
+    typealias Realtime = FalClientRealtime
+    typealias Queue = FalClientQueue
+}
