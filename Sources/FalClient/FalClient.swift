@@ -21,13 +21,45 @@ import Foundation
 /// }
 /// ```
 public struct FalClient: Client {
-    public let config: ClientConfig
+    public var config: ClientConfig
 
     public var queue: Queue { QueueClient(client: self) }
 
     public var realtime: Realtime { RealtimeClient(client: self) }
 
     public var storage: Storage { StorageClient(client: self) }
+
+    /// Updates the access token used for authentication in place.
+    /// - Parameter token: The new Bearer token
+    public mutating func setAccessToken(_ token: String) {
+        config = ClientConfig(
+            credentials: .bearerToken(token),
+            authScheme: .bearer,
+            requestProxy: config.requestProxy
+        )
+    }
+
+    /// Updates the proxy URL in place.
+    /// - Parameter url: The new proxy URL, or nil to remove proxy
+    public mutating func setProxy(_ url: String?) {
+        config = ClientConfig(
+            credentials: config.credentials,
+            authScheme: config.authScheme,
+            requestProxy: url
+        )
+    }
+
+    /// Updates both the proxy URL and access token in place.
+    /// - Parameters:
+    ///   - url: The new proxy URL, or nil to remove proxy
+    ///   - token: The new Bearer token
+    public mutating func setProxy(_ url: String?, accessToken token: String) {
+        config = ClientConfig(
+            credentials: .bearerToken(token),
+            authScheme: .bearer,
+            requestProxy: url
+        )
+    }
 
     public func run(_ app: String, input: Payload?, options: RunOptions) async throws -> Payload {
         var requestInput = input
@@ -76,11 +108,29 @@ public struct FalClient: Client {
 }
 
 public extension FalClient {
+    /// Creates a client with a proxy URL (primarily for testing).
     static func withProxy(_ url: String) -> Client {
         FalClient(config: ClientConfig(requestProxy: url))
     }
 
+    /// Creates a client with a proxy URL and access token (primarily for testing).
+    static func withProxy(_ url: String, accessToken: String) -> Client {
+        FalClient(config: ClientConfig(
+            credentials: .bearerToken(accessToken),
+            authScheme: .bearer,
+            requestProxy: url
+        ))
+    }
+
     static func withCredentials(_ credentials: ClientCredentials) -> Client {
         FalClient(config: ClientConfig(credentials: credentials))
+    }
+
+    /// Creates a client with a Bearer token (primarily for testing).
+    static func withBearerToken(_ token: String) -> Client {
+        FalClient(config: ClientConfig(
+            credentials: .bearerToken(token),
+            authScheme: .bearer
+        ))
     }
 }

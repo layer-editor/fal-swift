@@ -41,7 +41,13 @@ extension Client {
         // setup credentials if available
         let credentials = config.credentials.description
         if !credentials.isEmpty {
-            request.setValue("Key \(config.credentials.description)", forHTTPHeaderField: "authorization")
+            let authValue = switch config.authScheme {
+            case .key:
+                "Key \(credentials)"
+            case .bearer:
+                "Bearer \(credentials)"
+            }
+            request.setValue(authValue, forHTTPHeaderField: "authorization")
         }
 
         // setup the request proxy if available
