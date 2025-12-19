@@ -32,7 +32,7 @@ extension Client {
             url = proxyUrl
         }
 
-        var request = URLRequest(url: url)
+        var request = URLRequest(url: url, timeoutInterval: options.timeoutInterval)
         request.httpMethod = options.httpMethod.rawValue.uppercased()
         request.setValue("application/json", forHTTPHeaderField: "accept")
         request.setValue("application/json", forHTTPHeaderField: "content-type")

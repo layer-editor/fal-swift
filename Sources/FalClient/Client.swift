@@ -16,12 +16,29 @@ public protocol RequestOptions {
 public struct RunOptions: RequestOptions {
     public let path: String
     public let httpMethod: HttpMethod
+    /// The timeout interval for the HTTP request in seconds. Defaults to 60 seconds.
+    public let timeoutInterval: TimeInterval
 
-    static func withMethod(_ method: HttpMethod) -> RunOptions {
+    /// Creates request options with the specified parameters.
+    /// - Parameters:
+    ///   - path: The path to append to the endpoint URL.
+    ///   - httpMethod: The HTTP method to use.
+    ///   - timeoutInterval: The timeout interval for the request in seconds. Defaults to 60.
+    public init(path: String = "", httpMethod: HttpMethod = .post, timeoutInterval: TimeInterval = 60) {
+        self.path = path
+        self.httpMethod = httpMethod
+        self.timeoutInterval = timeoutInterval
+    }
+
+    public static func withMethod(_ method: HttpMethod) -> RunOptions {
         RunOptions(path: "", httpMethod: method)
     }
 
-    static func route(_ path: String, withMethod method: HttpMethod = .post) -> RunOptions {
+    public static func withTimeout(_ timeout: TimeInterval, method: HttpMethod = .post) -> RunOptions {
+        RunOptions(path: "", httpMethod: method, timeoutInterval: timeout)
+    }
+
+    public static func route(_ path: String, withMethod method: HttpMethod = .post) -> RunOptions {
         RunOptions(path: path, httpMethod: method)
     }
 }

@@ -16,7 +16,7 @@ extension DispatchTimeInterval {
         case let .nanoseconds(value):
             return value / 1_000_000
         case .never:
-            return 0
+            return Int.max
         @unknown default:
             return 0
         }
