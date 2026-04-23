@@ -111,12 +111,12 @@ public struct FalClient: Client {
 
 public extension FalClient {
     /// Creates a client with a proxy URL (primarily for testing).
-    static func withProxy(_ url: String) -> Client {
+    static func withProxy(_ url: String) -> FalClient {
         FalClient(config: ClientConfig(requestProxy: url))
     }
 
     /// Creates a client with a proxy URL and access token (primarily for testing).
-    static func withProxy(_ url: String, accessToken: String) -> Client {
+    static func withProxy(_ url: String, accessToken: String) -> FalClient {
         FalClient(config: ClientConfig(
             credentials: .bearerToken(accessToken),
             authScheme: .bearer,
@@ -124,12 +124,12 @@ public extension FalClient {
         ))
     }
 
-    static func withCredentials(_ credentials: ClientCredentials) -> Client {
+    static func withCredentials(_ credentials: ClientCredentials) -> FalClient {
         FalClient(config: ClientConfig(credentials: credentials))
     }
 
     /// Creates a client with a Bearer token (primarily for testing).
-    static func withBearerToken(_ token: String) -> Client {
+    static func withBearerToken(_ token: String) -> FalClient {
         FalClient(config: ClientConfig(
             credentials: .bearerToken(token),
             authScheme: .bearer
