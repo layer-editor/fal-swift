@@ -4,26 +4,26 @@ This is the living parity matrix for `FalClient` against current fal model API d
 
 ## Summary
 
-The Swift client has a useful core: direct `run`, queue-backed `subscribe`, manual queue `submit/status/response`, realtime WebSocket support, dynamic `Payload`, and `Codable` overloads. The main gap is that the current fal client contract is broader: official docs now describe `run`, `subscribe`, `submit`, `stream`, and realtime, with queue cancellation, status streaming, platform headers, richer status metadata, and safer timeout semantics.
+The Swift client now covers the core model API workflows: direct `run`, queue-backed `subscribe`, manual queue `submit/status/response/cancel`, queue status streaming, direct model `/stream`, realtime WebSocket support, dynamic `Payload`, and `Codable` overloads. The remaining gaps are narrower: realtime token/path parity, client-side retry policy, storage direct-CDN/fallback/multipart behavior, release docs, sample cleanup, and CI/release metadata.
 
 ## Feature Matrix
 
 | Capability | Current Swift | Current docs / peer clients | Priority |
 | --- | --- | --- | --- |
-| `run` | Present, basic options | Supports `timeout`, `start_timeout`, `hint`, headers in Python; JS has timeout headers | P1 |
-| `subscribe` | Present, polling only | Supports queue options, `on_enqueue`, client timeout semantics, server cancel on timeout | P0/P1 |
-| `queue.submit` | Returns only `String` request ID | Returns request ID plus status/result/cancel URLs and queue position | P1 |
-| `queue.status` | Polling, strict decoding | Includes request URLs, logs, metrics, error fields | P0 |
-| `queue.result` / response | Present | Present | P1 for typed response wrapper metadata |
-| `queue.cancel` | Missing | Documented and implemented in JS/Python | P1 |
-| `queue.streamStatus` | Missing | Documented SSE endpoint and implemented in JS/Java | P1 |
-| `stream` | Present | Official method for `/stream` SSE endpoints | P1 |
-| realtime | Present | Needs custom path/token-provider parity and concurrency hardening | P1 |
-| platform headers | Mostly missing | `start_timeout`, `hint`, `priority`, custom headers, storage/retry/fallback controls | P1 |
-| namespaced endpoints | Present | Peer clients preserve namespace/path pieces | P1 |
+| `run` | Present with platform options | Supports client HTTP timeout, start timeout, runner hint, retry/storage/fallback controls, and raw headers | Done |
+| `subscribe` | Present with queue options | Supports `onEnqueue`, status-detail callbacks, client timeout semantics, and server cancel on timeout/cancellation | Done |
+| `queue.submit` | Present | Preserves existing `String` request-id API and adds `QueueSubmitResult` metadata | Done |
+| `queue.status` | Present | Includes tolerant logs plus request URLs, metrics, and error metadata through `QueueStatusDetail` | Done |
+| `queue.result` / response | Present | Payload and typed `Decodable` response retrieval are available | Done |
+| `queue.cancel` | Present | Documented `PUT /requests/{request_id}/cancel` endpoint | Done |
+| `queue.streamStatus` | Present | Documented SSE endpoint implemented as `AsyncThrowingStream<QueueStatusDetail, Error>` | Done |
+| `stream` | Present | Official method for `/stream` SSE endpoints | Done |
+| realtime | Present, concurrency-hardened | Still needs custom path/token-provider parity and deeper fake socket tests | P1 |
+| platform headers | Present | Retry policy behavior is still client-side follow-up; server-side platform headers are modeled | Done/P1 |
+| namespaced endpoints | Present | Peer clients preserve namespace/path pieces | Done |
 | storage uploads | Improved | Initiates `fal-cdn-v3` uploads with file-name and lifecycle options; direct CDN, fallback, and multipart remain | P1/P2 |
 
-## Queue API Gaps
+## Queue API Status
 
 Current files:
 
@@ -32,28 +32,28 @@ Current files:
 - `Sources/FalClient/QueueStatus.swift`
 - `Sources/FalClient/FalClient.swift`
 
-Planned shape:
+Implemented shape:
 
 - `QueueSubmitResult`: `requestId`, `responseUrl`, `statusUrl`, `cancelUrl`, `queuePosition`.
 - `QueueStatus`: keep enum ergonomics, but preserve common metadata across states.
 - `Queue.cancel(_ id:of:) async throws`.
 - `Queue.streamStatus(...) -> AsyncThrowingStream<QueueStatusDetail, Error>` backed by the queue status SSE endpoint.
 - `Queue.subscribeToStatus(...) async throws -> QueueStatusDetail` for polling an existing request to a completed status detail.
-- High-level `FalClient.subscribe` gains `onEnqueue`, options, timeout cancellation, and status-streaming mode later.
+- High-level `FalClient.subscribe` has `onEnqueue`, request options, timeout/cancellation handling, and detail-aware polling through `subscribeWithStatusDetails(...)`.
 
 Compatibility rule: keep existing `submit(...) async throws -> String` available until a major version or deprecate it in favor of `enqueue`/`submitResult`.
 
 ## Request Options
 
-Current `RunOptions` mixes endpoint path, method, and URLRequest timeout. It does not model fal platform controls.
+Current `RunOptions` still carries endpoint path, HTTP method, and local URLRequest timeout, but now also models fal platform controls.
 
-Additive option design:
+Implemented option design:
 
-- `RequestHeaders` or plain `[String: String]`.
+- Plain `[String: String]` raw headers.
 - `startTimeout: TimeInterval?` mapped to `X-Fal-Request-Timeout`.
 - `hint: String?` mapped to `X-Fal-Runner-Hint`.
 - `priority: QueuePriority?` mapped to `X-Fal-Queue-Priority`.
-- `storageSettings` for object lifecycle once storage is modernized.
+- `storeInputOutput`, `objectLifecyclePreference`, retry-disable, and fallback-disable controls.
 - Keep `timeoutInterval` named as client HTTP timeout to avoid confusion with server start timeout.
 
 Naming rule: docs should call out the difference between:
@@ -67,7 +67,7 @@ Naming rule: docs should call out the difference between:
 
 Current Swift has shared SSE transport, queue status streaming, and direct model `/stream` support.
 
-Implemented first surface:
+Implemented surface:
 
 - Internal generic JSON SSE decoder shared by queue status streaming and direct model streaming.
 - `FalClient.stream(_ app: String, input: Payload?, options: StreamOptions = .init()) -> AsyncThrowingStream<Payload, Error>`.
@@ -103,6 +103,8 @@ Implemented:
 - Custom file names/content type.
 - Object lifecycle preferences.
 - `rest.fal.ai` initiate endpoint with `storage_type=fal-cdn-v3`.
+- Lifecycle duration validation before request construction.
+- Clean presigned PUT requests without Fal auth or lifecycle headers.
 
 Still separate from this small chunk:
 

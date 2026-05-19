@@ -26,6 +26,7 @@ Recently added request-option coverage:
 - Direct model stream request construction, default and custom stream paths, client HTTP timeout, Payload and typed event decoding, HTTP error payload preservation, and typed binary input rejection before request construction.
 - Reserved namespace endpoint parsing for `workflows/...` and `comfy/...`, including submit path preservation and namespace/owner/alias queue-base construction for status, stream-status, response, and cancel.
 - Storage upload options for generated/default file names, sanitized custom file names, uploaded-file lifecycle headers on initiate, and clean presigned PUT headers/body.
+- Object lifecycle durations are rejected before request construction when they are non-finite or not greater than zero.
 
 Remaining gaps:
 
@@ -216,6 +217,9 @@ Cases:
 - Top-level `Payload.data` uploads.
 - Nested dictionary and array data uploads recursively. Covered by `StorageTests`.
 - Invalid upload URL throws instead of crashing and rejects malformed, hostless, loopback, private, trailing-dot loopback, IPv4-mapped IPv6 loopback, numeric/hex/octal loopback, and invalid returned file URLs.
+- Upload initiation uses `rest.fal.ai` with `storage_type=fal-cdn-v3`, generated file names by default, custom sanitized file names when requested, and upload lifecycle headers only on the initiate request.
+- Presigned PUT requests keep the original body, content type, content length, and do not receive Fal authorization or lifecycle headers.
+- Invalid object lifecycle durations throw before any request is sent.
 - Typed `Encodable` containing `Data` throws a documented unsupported-input error before sending base64 JSON accidentally. Covered for typed `run` and typed `queue.submit`, including custom `encode(to:)` implementations.
 - `Payload.data` is rejected for GET queue requests before query serialization.
 - POST payload auto-upload is exercised through the `Storage` protocol extension so custom storage conformers are covered.

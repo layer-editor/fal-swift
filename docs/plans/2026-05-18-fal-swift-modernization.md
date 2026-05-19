@@ -21,15 +21,16 @@
 - [x] Implemented shared SSE transport and queue status streaming.
 - [x] Implemented direct model `/stream` support.
 - [x] Hardened storage uploads and typed binary handling.
+- [x] Added storage upload options for file names and uploaded-file lifecycle.
 - [ ] Updated README, sample docs, CI, and release metadata.
 
-## Source Baseline
+## Audit Baseline
 
-Local repo:
+Local repo at the start of this planning effort:
 
 - Fork: `layer-editor/fal-swift`
-- Current branch: `main`
-- Current local head during audit: `e4f8c3a Return concrete FalClient from factory methods`
+- Branch during audit: `main`
+- Local head during audit: `e4f8c3a Return concrete FalClient from factory methods`
 - Upstream `fal-ai/fal-swift` shallow head during audit: `4a589b9 chore: update realtime example to use turbo`
 
 External references checked:
@@ -86,14 +87,14 @@ External references checked:
   - Map documented headers: `X-Fal-Request-Timeout`, `X-Fal-Runner-Hint`, `X-Fal-Queue-Priority`, `X-Fal-No-Retry`, `X-Fal-Store-IO`, `X-Fal-Object-Lifecycle-Preference`, and `x-app-fal-disable-fallback`.
   - Added `RunOptions` fields for raw headers, start timeout, runner hint, queue priority, retry disable, input/output storage, object lifecycle, and fallback disable. Named fields override matching raw platform headers.
 
-- [ ] Expand queue API beyond `submit -> String`.
+- [x] Expand queue API beyond `submit -> String`.
   - Add rich submit result or handle: `requestId`, `responseUrl`, `statusUrl`, `cancelUrl`, queue position when available. `Queue.submitDetailed(...)` now returns `QueueSubmitResult` while preserving existing `submit -> String`.
-  - Add `cancel`.
+  - Add `cancel`. `Queue.cancel(...)` now uses the documented `PUT /requests/{request_id}/cancel` endpoint.
   - Add `subscribeToStatus`. `Queue.subscribeToStatus(...)` now observes an existing request until completion and returns the final `QueueStatusDetail` without taking ownership of server-side cancellation.
   - Add `streamStatus` using the queue status SSE endpoint. `Queue.streamStatus(...)` now exposes Fal's `/requests/{request_id}/status/stream` SSE endpoint as an `AsyncThrowingStream<QueueStatusDetail, Error>`.
   - Add `onEnqueue` to high-level `subscribe`. Payload and typed subscribe overloads can now receive `QueueSubmitResult` after enqueue.
   - Add detail-aware subscribe callbacks so high-level subscribers can observe status metadata without manual `statusDetail` polling. `Payload` and typed `Decodable` `subscribeWithStatusDetails(...)` APIs are now available without changing existing `subscribe` trailing-closure behavior.
-  - On client timeout or Swift task cancellation, attempt server-side cancel where a request ID is known. `Queue.cancel(...)` now uses the documented `PUT /requests/{request_id}/cancel` endpoint, and subscribe preserves the original timeout/cancellation error if server-side cancel fails.
+  - On client timeout or Swift task cancellation, attempt server-side cancel where a request ID is known, and preserve the original timeout/cancellation error if server-side cancel fails.
 
 - [x] Add `stream` support for model `/stream` endpoints.
   - Direct `fal.run` SSE, not queue-backed.
@@ -111,17 +112,17 @@ External references checked:
 - [ ] Modernize storage uploads after request options land.
   - Move away from `rest.alpha.fal.ai` where appropriate. Upload initiation now uses `https://rest.fal.ai/storage/upload/initiate?storage_type=fal-cdn-v3`.
   - Add lifecycle settings, file names, recursive `Payload` transform, and explicit behavior for typed `Data`.
-  - Storage upload options now support custom file names and uploaded-file lifecycle headers while preserving existing `Storage` conformers.
+  - Storage upload options now support custom file names and uploaded-file lifecycle headers while preserving existing `Storage` conformers. Custom names are sanitized and Windows-style path components are stripped.
   - Recursive `Payload.data` upload transforms are now implemented for dictionaries and arrays.
   - Payload auto-upload now works through the `Storage` protocol, so custom storage conformers can participate.
   - Typed `Encodable` inputs containing `Data` now fail at JSON encoding time instead of silently sending base64 JSON, including custom `encode(to:)` implementations.
   - `Payload.data` on GET requests now fails before query serialization to avoid leaking binary data into URLs.
-  - Evaluate direct CDN upload, fallback repositories, redirect validation, redacted invalid upload URL values, and multipart support as separate implementation steps, because those can grow quickly.
+  - Remaining: direct CDN upload/token flow, fallback repositories, multipart upload for large files, presigned PUT redirect validation, and stricter raw invalid upload URL associated-value redaction.
 
 ## P1: Robustness and Test Coverage
 
-- [ ] Replace duplicated subscribe polling with a shared queue poller.
-  - Both typed and untyped APIs should share deadline, cancellation, logging, callback, and response-fetch behavior.
+- [x] Replace duplicated subscribe polling with a shared queue poller.
+  - Typed and untyped APIs now share deadline, cancellation, logging, callback, and response-fetch behavior through `QueuePolling.swift`.
 
 - [ ] Add client-side retry policy for transient transport/status/result failures.
   - Start with queue status/result and storage upload.
@@ -164,6 +165,16 @@ External references checked:
   - Enable targeted CI tests.
   - Stop hardcoding user agent version `0.1.0`.
   - Add `CHANGELOG.md` and `CONTRIBUTING.md`.
+
+## Current Remaining Work
+
+High-leverage implementation work that remains after the completed queue, streaming, endpoint parsing, request-option, and first storage modernization slices:
+
+- Storage security/parity: validate presigned PUT redirects, avoid exposing raw signed upload URL query strings in associated invalid URL values where practical, evaluate direct `v3.fal.media` token flow, fallback repositories, and multipart upload.
+- Client reliability: add retry policy for transient queue status/result and storage failures without retrying cancellation, user timeouts, or direct streams; add remaining explicit payload subscribe timeout/cancellation coverage.
+- Realtime parity: update token/path behavior against current Fal clients and add fake WebSocket/session boundary tests.
+- Media ergonomics: replace unsafe synchronous `FalImageContent.data` with async throwing helpers before deprecating it.
+- Release readiness: README refresh, markdown guides, sample cleanup/legacy labeling, CI, changelog, contributing guide, and user-agent/package version cleanup.
 
 ## Drill-Down Docs
 
