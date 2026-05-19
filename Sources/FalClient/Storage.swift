@@ -54,6 +54,50 @@ public struct StorageUploadRepository: Equatable, Sendable {
     public static let directFalCDNV3 = StorageUploadRepository(kind: .directFalCDNV3)
 }
 
+/// Controls automatic multipart storage uploads.
+public struct StorageMultipartUploadOptions: Equatable, Sendable {
+    public static let defaultThresholdBytes = 100 * 1024 * 1024
+    public static let defaultChunkSizeBytes = 10 * 1024 * 1024
+
+    /// Default multipart behavior: use 10 MB chunks for uploads larger than 100 MB.
+    public static let automatic = StorageMultipartUploadOptions()
+
+    /// Disables multipart uploads.
+    public static let disabled = StorageMultipartUploadOptions(
+        isEnabled: false,
+        thresholdBytes: defaultThresholdBytes,
+        chunkSizeBytes: defaultChunkSizeBytes
+    )
+
+    /// Whether multipart uploads are enabled.
+    public let isEnabled: Bool
+
+    /// Minimum data size that should use multipart upload.
+    public let thresholdBytes: Int
+
+    /// Size of each multipart chunk.
+    public let chunkSizeBytes: Int
+
+    /// Creates multipart upload options.
+    /// - Parameters:
+    ///   - thresholdBytes: Minimum data size that should use multipart upload.
+    ///   - chunkSizeBytes: Size of each multipart chunk.
+    public init(
+        thresholdBytes: Int = defaultThresholdBytes,
+        chunkSizeBytes: Int = defaultChunkSizeBytes
+    ) {
+        self.isEnabled = true
+        self.thresholdBytes = thresholdBytes
+        self.chunkSizeBytes = chunkSizeBytes
+    }
+
+    private init(isEnabled: Bool, thresholdBytes: Int, chunkSizeBytes: Int) {
+        self.isEnabled = isEnabled
+        self.thresholdBytes = thresholdBytes
+        self.chunkSizeBytes = chunkSizeBytes
+    }
+}
+
 /// Options that customize a storage upload.
 public struct StorageUploadOptions: Equatable, Sendable {
     /// File name sent to fal as upload metadata.
@@ -71,22 +115,28 @@ public struct StorageUploadOptions: Equatable, Sendable {
     /// Upload backends to try if the primary backend fails with a transient error.
     public let fallbackRepositories: [StorageUploadRepository]
 
+    /// Multipart behavior for repositories that support multipart uploads.
+    public let multipartUpload: StorageMultipartUploadOptions
+
     /// Creates storage upload options.
     /// - Parameters:
     ///   - fileName: File name sent to fal as upload metadata.
     ///   - objectLifecyclePreference: CDN lifecycle preference for the uploaded file.
     ///   - repository: Primary upload backend.
     ///   - fallbackRepositories: Upload backends to try if the primary backend fails with a transient error.
+    ///   - multipartUpload: Multipart behavior for repositories that support multipart uploads.
     public init(
         fileName: String? = nil,
         objectLifecyclePreference: FalObjectLifecyclePreference? = nil,
         repository: StorageUploadRepository = .falCDNV3PresignedURL,
-        fallbackRepositories: [StorageUploadRepository] = []
+        fallbackRepositories: [StorageUploadRepository] = [],
+        multipartUpload: StorageMultipartUploadOptions = .automatic
     ) {
         self.fileName = fileName
         self.objectLifecyclePreference = objectLifecyclePreference
         self.repository = repository
         self.fallbackRepositories = fallbackRepositories
+        self.multipartUpload = multipartUpload
     }
 }
 
@@ -180,6 +230,25 @@ struct DirectStorageUploadResponse: Codable {
     enum CodingKeys: String, CodingKey {
         case accessURL = "access_url"
     }
+}
+
+struct MultipartStorageUploadResponse: Codable {
+    let accessURL: String
+    let uploadID: String
+
+    enum CodingKeys: String, CodingKey {
+        case accessURL = "access_url"
+        case uploadID = "uploadId"
+    }
+}
+
+struct MultipartStorageUploadPart: Encodable {
+    let partNumber: Int
+    let etag: String
+}
+
+struct CompleteMultipartStorageUploadRequest: Encodable {
+    let parts: [MultipartStorageUploadPart]
 }
 
 struct StorageClient: Storage {
@@ -280,6 +349,10 @@ struct StorageClient: Storage {
     }
 
     private func uploadDirectlyToFalCDNV3(data: Data, ofType type: FileType, options: StorageUploadOptions) async throws -> String {
+        try options.multipartUpload.validate()
+        if options.multipartUpload.shouldUploadUsingMultipart(dataByteCount: data.count) {
+            return try await uploadMultipartDirectlyToFalCDNV3(data: data, ofType: type, options: options)
+        }
         let token = try await fetchCDNToken()
         let fileName = options.normalizedFileName(for: type)
         let uploadUrlString = "\(token.baseURL.trimmingSuffix("/"))/files/upload"
@@ -313,6 +386,140 @@ struct StorageClient: Storage {
             return uploadResponse.accessURL
         } catch {
             throw TerminalStorageUploadError(underlying: error)
+        }
+    }
+
+    private func uploadMultipartDirectlyToFalCDNV3(data: Data, ofType type: FileType, options: StorageUploadOptions) async throws -> String {
+        let token = try await fetchCDNToken()
+        let fileName = options.normalizedFileName(for: type)
+        let upload = try await createMultipartUpload(token: token, fileName: fileName, type: type, options: options)
+
+        do {
+            var parts: [MultipartStorageUploadPart] = []
+            var partNumber = 1
+            var chunkStart = data.startIndex
+            while chunkStart < data.endIndex {
+                let chunkEnd = Swift.min(chunkStart + options.multipartUpload.chunkSizeBytes, data.endIndex)
+                let chunk = data[chunkStart ..< chunkEnd]
+                let etag = try await uploadMultipartPart(
+                    chunk,
+                    partNumber: partNumber,
+                    upload: upload,
+                    token: token,
+                    type: type
+                )
+                parts.append(MultipartStorageUploadPart(partNumber: partNumber, etag: etag))
+                partNumber += 1
+                chunkStart = chunkEnd
+            }
+            try await completeMultipartUpload(upload: upload, token: token, parts: parts)
+            return upload.accessURL
+        } catch {
+            throw TerminalStorageUploadError(underlying: error)
+        }
+    }
+
+    private func createMultipartUpload(
+        token: StorageCDNToken,
+        fileName: String,
+        type: FileType,
+        options: StorageUploadOptions
+    ) async throws -> MultipartStorageUploadResponse {
+        let uploadUrlString = "\(token.baseURL.trimmingSuffix("/"))/files/upload/multipart"
+        guard let url = URL.safeFalDirectCDNV3UploadURL(from: uploadUrlString) else {
+            throw FalError.invalidUrl(url: uploadUrlString.redactedURLForDescription)
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("\(token.tokenType) \(token.token)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue(type.mimeType, forHTTPHeaderField: "Content-Type")
+        request.setValue(fileName, forHTTPHeaderField: "X-Fal-File-Name")
+        if let objectLifecyclePreference = options.objectLifecyclePreference {
+            let lifecycleHeader = try objectLifecyclePreference.headerValue()
+            request.setValue(lifecycleHeader, forHTTPHeaderField: "X-Fal-Object-Lifecycle")
+            request.setValue(lifecycleHeader, forHTTPHeaderField: "X-Fal-Object-Lifecycle-Preference")
+        }
+
+        let response = try await client.resolvedHTTPTransport.data(
+            for: request,
+            validatingRedirectsWith: { URL.safeFalDirectCDNV3UploadURL($0) }
+        )
+        try client.checkResponseStatus(for: response.response, withData: response.data)
+        let upload = try JSONDecoder().decode(MultipartStorageUploadResponse.self, from: response.data)
+        guard URL.safeFalStorageFileURL(from: upload.accessURL) != nil else {
+            throw FalError.invalidUrl(url: upload.accessURL.redactedURLForDescription)
+        }
+        return upload
+    }
+
+    private func uploadMultipartPart(
+        _ data: Data,
+        partNumber: Int,
+        upload: MultipartStorageUploadResponse,
+        token: StorageCDNToken,
+        type: FileType
+    ) async throws -> String {
+        let uploadUrlString = "\(upload.accessURL.trimmingSuffix("/"))/multipart/\(upload.uploadID)/\(partNumber)"
+        guard let url = URL.safeFalDirectCDNV3UploadURL(from: uploadUrlString) else {
+            throw FalError.invalidUrl(url: uploadUrlString.redactedURLForDescription)
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "PUT"
+        request.httpBody = data
+        request.setValue("\(token.tokenType) \(token.token)", forHTTPHeaderField: "Authorization")
+        request.setValue(type.mimeType, forHTTPHeaderField: "Content-Type")
+        request.setValue(String(data.count), forHTTPHeaderField: "Content-Length")
+        request.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
+
+        let response = try await retrying(policy: .transientRequest) {
+            let response = try await client.resolvedHTTPTransport.data(
+                for: request,
+                validatingRedirectsWith: { URL.safeFalDirectCDNV3UploadURL($0) }
+            )
+            do {
+                try client.checkResponseStatus(for: response.response, withData: response.data)
+            } catch let falError as FalError {
+                throw TransientStorageUploadError.nonTerminal(falError)
+            }
+            return response
+        }
+        guard let httpResponse = response.response as? HTTPURLResponse,
+              let etag = httpResponse.headerValue(named: "etag")
+        else {
+            throw FalError.invalidResultFormat
+        }
+        return etag
+    }
+
+    private func completeMultipartUpload(
+        upload: MultipartStorageUploadResponse,
+        token: StorageCDNToken,
+        parts: [MultipartStorageUploadPart]
+    ) async throws {
+        let uploadUrlString = "\(upload.accessURL.trimmingSuffix("/"))/multipart/\(upload.uploadID)/complete"
+        guard let url = URL.safeFalDirectCDNV3UploadURL(from: uploadUrlString) else {
+            throw FalError.invalidUrl(url: uploadUrlString.redactedURLForDescription)
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.httpBody = try JSONEncoder().encode(CompleteMultipartStorageUploadRequest(parts: parts))
+        request.setValue("\(token.tokenType) \(token.token)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        try await retrying(policy: .transientRequest) {
+            let response = try await client.resolvedHTTPTransport.data(
+                for: request,
+                validatingRedirectsWith: { URL.safeFalDirectCDNV3UploadURL($0) }
+            )
+            do {
+                try client.checkResponseStatus(for: response.response, withData: response.data)
+            } catch let falError as FalError {
+                throw TransientStorageUploadError.nonTerminal(falError)
+            }
         }
     }
 
@@ -355,6 +562,20 @@ private extension StorageUploadOptions {
     }
 }
 
+private extension StorageMultipartUploadOptions {
+    func validate() throws {
+        guard thresholdBytes > 0, chunkSizeBytes > 0 else {
+            throw FalError.unsupportedInput(
+                message: "Multipart upload threshold and chunk size must be greater than 0 bytes."
+            )
+        }
+    }
+
+    func shouldUploadUsingMultipart(dataByteCount: Int) -> Bool {
+        isEnabled && dataByteCount > thresholdBytes
+    }
+}
+
 private extension Character {
     var isAllowedUploadFileNameCharacter: Bool {
         guard let scalar = unicodeScalars.first, unicodeScalars.count == 1 else {
@@ -364,6 +585,15 @@ private extension Character {
             return false
         }
         return true
+    }
+}
+
+private extension HTTPURLResponse {
+    func headerValue(named name: String) -> String? {
+        for (key, value) in allHeaderFields where String(describing: key).lowercased() == name.lowercased() {
+            return String(describing: value)
+        }
+        return nil
     }
 }
 
@@ -577,7 +807,18 @@ private struct TerminalStorageUploadError: Error {
     let underlying: Error
 }
 
+struct TransientStorageUploadError: Error {
+    let underlying: Error
+
+    static func nonTerminal(_ error: Error) -> TransientStorageUploadError {
+        TransientStorageUploadError(underlying: error)
+    }
+}
+
 private func shouldFallbackAfterStorageUploadError(_ error: Error) -> Bool {
+    if let transientError = error as? TransientStorageUploadError {
+        return shouldFallbackAfterStorageUploadError(transientError.underlying)
+    }
     if error is CancellationError {
         return false
     }

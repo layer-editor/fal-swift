@@ -25,6 +25,9 @@ struct RetryPolicy: Sendable {
         guard attempt < maxAttempts else {
             return false
         }
+        if let transientStorageUploadError = error as? TransientStorageUploadError {
+            return shouldRetry(transientStorageUploadError.underlying, afterAttempt: attempt)
+        }
         if error is CancellationError {
             return false
         }
@@ -38,6 +41,9 @@ struct RetryPolicy: Sendable {
     }
 
     func delayMilliseconds(afterAttempt attempt: Int, error: Error) -> Int {
+        if let transientStorageUploadError = error as? TransientStorageUploadError {
+            return delayMilliseconds(afterAttempt: attempt, error: transientStorageUploadError.underlying)
+        }
         if case let FalError.httpError(httpError) = error,
            let retryAfterMilliseconds = httpError.retryAfterMilliseconds
         {

@@ -289,6 +289,16 @@ final class StorageTests: XCTestCase {
             XCTFail("Expected custom storage implementation to reject fallback repositories")
         } catch FalError.unsupportedOperation {
         }
+
+        do {
+            _ = try await storage.upload(
+                data: Data("custom-multipart".utf8),
+                ofType: .imagePng,
+                options: .init(multipartUpload: .init(thresholdBytes: 1, chunkSizeBytes: 1))
+            )
+            XCTFail("Expected custom storage implementation to reject multipart options")
+        } catch FalError.unsupportedOperation {
+        }
     }
 
     func testAutoUploadRecursivelyUploadsNestedPayloadData() async throws {
@@ -702,6 +712,362 @@ final class StorageTests: XCTestCase {
             "https://rest.fal.ai/storage/auth/token?storage_type=fal-cdn-v3",
             "https://v3.fal.media/files/upload",
         ])
+    }
+
+    func testDirectFalCDNV3MultipartUploadChunksAndCompletesLargeData() async throws {
+        let data = Data("abcdefgh".utf8)
+        let transport = RecordingHTTPTransport { request in
+            switch request.url?.absoluteString {
+            case "https://rest.fal.ai/storage/auth/token?storage_type=fal-cdn-v3":
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!
+                let data = """
+                {
+                  "token": "cdn-token",
+                  "token_type": "Bearer",
+                  "base_url": "https://v3.fal.media",
+                  "expires_at": "2026-05-19T12:00:00+00:00"
+                }
+                """.data(using: .utf8)!
+                return HTTPTransportResponse(data: data, response: response)
+            case "https://v3.fal.media/files/upload/multipart":
+                XCTAssertEqual(request.httpMethod, "POST")
+                XCTAssertNil(request.httpBody)
+                XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer cdn-token")
+                XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "image/png")
+                XCTAssertEqual(request.value(forHTTPHeaderField: "X-Fal-File-Name"), "large.png")
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!
+                let data = #"{"access_url":"https://v3.fal.media/files/rabbit/large.png","uploadId":"upload-123"}"#.data(using: .utf8)!
+                return HTTPTransportResponse(data: data, response: response)
+            case "https://v3.fal.media/files/rabbit/large.png/multipart/upload-123/1",
+                 "https://v3.fal.media/files/rabbit/large.png/multipart/upload-123/2",
+                 "https://v3.fal.media/files/rabbit/large.png/multipart/upload-123/3":
+                let partNumber = request.url!.lastPathComponent
+                let expectedBodies = [
+                    "1": Data("abc".utf8),
+                    "2": Data("def".utf8),
+                    "3": Data("gh".utf8),
+                ]
+                XCTAssertEqual(request.httpMethod, "PUT")
+                XCTAssertEqual(request.httpBody, expectedBodies[partNumber])
+                XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer cdn-token")
+                XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "image/png")
+                XCTAssertEqual(request.value(forHTTPHeaderField: "Accept-Encoding"), "identity")
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: [
+                        "ETag": "etag-\(partNumber)",
+                    ]
+                )!
+                return HTTPTransportResponse(data: Data(), response: response)
+            case "https://v3.fal.media/files/rabbit/large.png/multipart/upload-123/complete":
+                XCTAssertEqual(request.httpMethod, "POST")
+                let body = try Payload.create(fromJSON: try XCTUnwrap(request.httpBody))
+                XCTAssertEqual(body["parts"][0]["partNumber"], .int(1))
+                XCTAssertEqual(body["parts"][0]["etag"].stringValue, "etag-1")
+                XCTAssertEqual(body["parts"][1]["partNumber"], .int(2))
+                XCTAssertEqual(body["parts"][1]["etag"].stringValue, "etag-2")
+                XCTAssertEqual(body["parts"][2]["partNumber"], .int(3))
+                XCTAssertEqual(body["parts"][2]["etag"].stringValue, "etag-3")
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!
+                return HTTPTransportResponse(data: Data(), response: response)
+            default:
+                XCTFail("Unexpected request to \(request.url?.absoluteString ?? "nil")")
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 500,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!
+                return HTTPTransportResponse(data: Data(), response: response)
+            }
+        }
+        let storage = StorageClient(client: StorageTestClient(httpTransport: transport))
+
+        let fileURL = try await storage.upload(
+            data: data,
+            ofType: .imagePng,
+            options: .init(
+                fileName: "large.png",
+                repository: .directFalCDNV3,
+                multipartUpload: .init(thresholdBytes: 4, chunkSizeBytes: 3)
+            )
+        )
+
+        XCTAssertEqual(fileURL, "https://v3.fal.media/files/rabbit/large.png")
+        XCTAssertEqual(transport.requests.map { $0.url?.absoluteString }, [
+            "https://rest.fal.ai/storage/auth/token?storage_type=fal-cdn-v3",
+            "https://v3.fal.media/files/upload/multipart",
+            "https://v3.fal.media/files/rabbit/large.png/multipart/upload-123/1",
+            "https://v3.fal.media/files/rabbit/large.png/multipart/upload-123/2",
+            "https://v3.fal.media/files/rabbit/large.png/multipart/upload-123/3",
+            "https://v3.fal.media/files/rabbit/large.png/multipart/upload-123/complete",
+        ])
+    }
+
+    func testDirectFalCDNV3MultipartUploadRejectsInvalidOptionsBeforeNetwork() async throws {
+        let transport = RecordingHTTPTransport { request in
+            XCTFail("Unexpected request to \(request.url?.absoluteString ?? "nil")")
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: nil
+            )!
+            return HTTPTransportResponse(data: Data(), response: response)
+        }
+        let storage = StorageClient(client: StorageTestClient(httpTransport: transport))
+
+        do {
+            _ = try await storage.upload(
+                data: Data("image".utf8),
+                ofType: .imagePng,
+                options: .init(repository: .directFalCDNV3, multipartUpload: .init(thresholdBytes: 0, chunkSizeBytes: 1))
+            )
+            XCTFail("Expected invalid multipart threshold to throw")
+        } catch FalError.unsupportedInput(let message) {
+            XCTAssertEqual(message, "Multipart upload threshold and chunk size must be greater than 0 bytes.")
+        }
+
+        XCTAssertTrue(transport.requests.isEmpty)
+    }
+
+    func testPresignedUploadIgnoresInvalidMultipartOptions() async throws {
+        let transport = RecordingHTTPTransport { request in
+            if request.url?.host == "rest.fal.ai" {
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!
+                let data = """
+                {
+                  "file_url": "https://fal.media/file.png",
+                  "upload_url": "https://storage.googleapis.com/upload"
+                }
+                """.data(using: .utf8)!
+                return HTTPTransportResponse(data: data, response: response)
+            }
+
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: nil
+            )!
+            return HTTPTransportResponse(data: Data(), response: response)
+        }
+        let storage = StorageClient(client: StorageTestClient(httpTransport: transport))
+
+        let fileURL = try await storage.upload(
+            data: Data("image".utf8),
+            ofType: .imagePng,
+            options: .init(multipartUpload: .init(thresholdBytes: 0, chunkSizeBytes: 0))
+        )
+
+        XCTAssertEqual(fileURL, "https://fal.media/file.png")
+        XCTAssertEqual(transport.requests.map { $0.url?.absoluteString }, [
+            "https://rest.fal.ai/storage/upload/initiate?storage_type=fal-cdn-v3",
+            "https://storage.googleapis.com/upload",
+        ])
+    }
+
+    func testDirectFalCDNV3MultipartUploadRetriesTransientPartPutAndComplete() async throws {
+        var firstPartAttempts = 0
+        var completeAttempts = 0
+        let data = Data("abcd".utf8)
+        let transport = RecordingHTTPTransport { request in
+            switch request.url?.absoluteString {
+            case "https://rest.fal.ai/storage/auth/token?storage_type=fal-cdn-v3":
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!
+                let data = """
+                {
+                  "token": "cdn-token",
+                  "token_type": "Bearer",
+                  "base_url": "https://v3.fal.media",
+                  "expires_at": "2026-05-19T12:00:00+00:00"
+                }
+                """.data(using: .utf8)!
+                return HTTPTransportResponse(data: data, response: response)
+            case "https://v3.fal.media/files/upload/multipart":
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!
+                let data = #"{"access_url":"https://v3.fal.media/files/rabbit/retry.png","uploadId":"upload-123"}"#.data(using: .utf8)!
+                return HTTPTransportResponse(data: data, response: response)
+            case "https://v3.fal.media/files/rabbit/retry.png/multipart/upload-123/1":
+                firstPartAttempts += 1
+                if firstPartAttempts == 1 {
+                    let response = HTTPURLResponse(
+                        url: request.url!,
+                        statusCode: 503,
+                        httpVersion: nil,
+                        headerFields: nil
+                    )!
+                    return HTTPTransportResponse(data: Data(#"{"detail":"temporarily unavailable"}"#.utf8), response: response)
+                }
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: [
+                        "ETag": "etag-1",
+                    ]
+                )!
+                return HTTPTransportResponse(data: Data(), response: response)
+            case "https://v3.fal.media/files/rabbit/retry.png/multipart/upload-123/2":
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: [
+                        "ETag": "etag-2",
+                    ]
+                )!
+                return HTTPTransportResponse(data: Data(), response: response)
+            case "https://v3.fal.media/files/rabbit/retry.png/multipart/upload-123/complete":
+                completeAttempts += 1
+                if completeAttempts == 1 {
+                    let response = HTTPURLResponse(
+                        url: request.url!,
+                        statusCode: 503,
+                        httpVersion: nil,
+                        headerFields: nil
+                    )!
+                    return HTTPTransportResponse(data: Data(#"{"detail":"temporarily unavailable"}"#.utf8), response: response)
+                }
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!
+                return HTTPTransportResponse(data: Data(), response: response)
+            default:
+                XCTFail("Unexpected request to \(request.url?.absoluteString ?? "nil")")
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 500,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!
+                return HTTPTransportResponse(data: Data(), response: response)
+            }
+        }
+        let storage = StorageClient(client: StorageTestClient(httpTransport: transport))
+
+        let fileURL = try await storage.upload(
+            data: data,
+            ofType: .imagePng,
+            options: .init(repository: .directFalCDNV3, multipartUpload: .init(thresholdBytes: 2, chunkSizeBytes: 2))
+        )
+
+        XCTAssertEqual(fileURL, "https://v3.fal.media/files/rabbit/retry.png")
+        XCTAssertEqual(firstPartAttempts, 2)
+        XCTAssertEqual(completeAttempts, 2)
+    }
+
+    func testDirectFalCDNV3MultipartUploadDoesNotFallbackAfterPartUploadStarts() async throws {
+        var partAttempts = 0
+        let transport = RecordingHTTPTransport { request in
+            switch request.url?.absoluteString {
+            case "https://rest.fal.ai/storage/auth/token?storage_type=fal-cdn-v3":
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!
+                let data = """
+                {
+                  "token": "cdn-token",
+                  "token_type": "Bearer",
+                  "base_url": "https://v3.fal.media",
+                  "expires_at": "2026-05-19T12:00:00+00:00"
+                }
+                """.data(using: .utf8)!
+                return HTTPTransportResponse(data: data, response: response)
+            case "https://v3.fal.media/files/upload/multipart":
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!
+                let data = #"{"access_url":"https://v3.fal.media/files/rabbit/terminal.png","uploadId":"upload-123"}"#.data(using: .utf8)!
+                return HTTPTransportResponse(data: data, response: response)
+            case "https://v3.fal.media/files/rabbit/terminal.png/multipart/upload-123/1":
+                partAttempts += 1
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 503,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!
+                return HTTPTransportResponse(data: Data(#"{"detail":"temporarily unavailable"}"#.utf8), response: response)
+            default:
+                XCTFail("Unexpected request to \(request.url?.absoluteString ?? "nil")")
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 500,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!
+                return HTTPTransportResponse(data: Data(), response: response)
+            }
+        }
+        let storage = StorageClient(client: StorageTestClient(httpTransport: transport))
+
+        do {
+            _ = try await storage.upload(
+                data: Data("abcd".utf8),
+                ofType: .imagePng,
+                options: .init(
+                    repository: .directFalCDNV3,
+                    fallbackRepositories: [.falCDNV3PresignedURL],
+                    multipartUpload: .init(thresholdBytes: 2, chunkSizeBytes: 2)
+                )
+            )
+            XCTFail("Expected multipart part failure to be terminal")
+        } catch let error as TransientStorageUploadError {
+            guard case FalError.httpError(let httpError) = error.underlying else {
+                XCTFail("Expected HTTP error, got \(error)")
+                return
+            }
+            XCTAssertEqual(httpError.statusCode, 503)
+        } catch {
+            XCTFail("Expected terminal transient storage upload error, got \(error)")
+        }
+
+        XCTAssertEqual(partAttempts, 3)
+        XCTAssertFalse(transport.requests.contains {
+            $0.url?.absoluteString == "https://rest.fal.ai/storage/upload/initiate?storage_type=fal-cdn-v3"
+        })
     }
 
     func testUploadCanFallbackFromPresignedRepositoryToDirectFalCDNV3() async throws {
