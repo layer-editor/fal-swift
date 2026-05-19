@@ -53,7 +53,7 @@ public extension Client {
         onQueueUpdate: OnQueueUpdate? = nil
     ) async throws -> Output {
         let requestId = try await queue.submit(app, input: input, options: options)
-        try await pollQueueUntilCompleted(
+        return try await queueResponseAfterPolling(
             queue: queue,
             app: app,
             requestId: requestId,
@@ -62,7 +62,6 @@ public extension Client {
             includeLogs: includeLogs,
             onQueueUpdate: onQueueUpdate
         )
-        return try await queue.response(app, of: requestId)
     }
 
     func subscribe<Output: Decodable>(
@@ -77,7 +76,7 @@ public extension Client {
     ) async throws -> Output {
         let submitResult = try await queue.submitDetailed(app, input: input, options: options)
         onEnqueue(submitResult)
-        try await pollQueueUntilCompleted(
+        return try await queueResponseAfterPolling(
             queue: queue,
             app: app,
             requestId: submitResult.requestId,
@@ -86,7 +85,6 @@ public extension Client {
             includeLogs: includeLogs,
             onQueueUpdate: onQueueUpdate
         )
-        return try await queue.response(app, of: submitResult.requestId)
     }
 
     func subscribe<Output: Decodable>(
@@ -98,7 +96,7 @@ public extension Client {
         onQueueUpdate: OnQueueUpdate? = nil
     ) async throws -> Output {
         let requestId = try await queue.submit(app, input: input)
-        try await pollQueueUntilCompleted(
+        return try await queueResponseAfterPolling(
             queue: queue,
             app: app,
             requestId: requestId,
@@ -107,7 +105,6 @@ public extension Client {
             includeLogs: includeLogs,
             onQueueUpdate: onQueueUpdate
         )
-        return try await queue.response(app, of: requestId)
     }
 
     func subscribe<Output: Decodable>(
@@ -121,7 +118,7 @@ public extension Client {
     ) async throws -> Output {
         let submitResult = try await queue.submitDetailed(app, input: input)
         onEnqueue(submitResult)
-        try await pollQueueUntilCompleted(
+        return try await queueResponseAfterPolling(
             queue: queue,
             app: app,
             requestId: submitResult.requestId,
@@ -130,7 +127,6 @@ public extension Client {
             includeLogs: includeLogs,
             onQueueUpdate: onQueueUpdate
         )
-        return try await queue.response(app, of: submitResult.requestId)
     }
 
     func subscribeWithStatusDetails<Output: Decodable>(
@@ -143,7 +139,7 @@ public extension Client {
         onQueueStatusDetailUpdate: @escaping OnQueueStatusDetailUpdate
     ) async throws -> Output {
         let requestId = try await queue.submit(app, input: input, options: options)
-        try await pollQueueUntilCompletedWithStatusDetails(
+        return try await queueResponseAfterStatusDetailPolling(
             queue: queue,
             app: app,
             requestId: requestId,
@@ -152,7 +148,6 @@ public extension Client {
             includeLogs: includeLogs,
             onQueueStatusDetailUpdate: onQueueStatusDetailUpdate
         )
-        return try await queue.response(app, of: requestId)
     }
 
     func subscribeWithStatusDetails<Output: Decodable>(
@@ -164,7 +159,7 @@ public extension Client {
         onQueueStatusDetailUpdate: @escaping OnQueueStatusDetailUpdate
     ) async throws -> Output {
         let requestId = try await queue.submit(app, input: input)
-        try await pollQueueUntilCompletedWithStatusDetails(
+        return try await queueResponseAfterStatusDetailPolling(
             queue: queue,
             app: app,
             requestId: requestId,
@@ -173,6 +168,5 @@ public extension Client {
             includeLogs: includeLogs,
             onQueueStatusDetailUpdate: onQueueStatusDetailUpdate
         )
-        return try await queue.response(app, of: requestId)
     }
 }

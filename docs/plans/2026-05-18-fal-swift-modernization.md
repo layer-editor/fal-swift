@@ -171,6 +171,7 @@ External references checked:
 - 2026-05-18: Added shared `RunOptions` platform controls and queue submit overloads for start timeout, runner hint, priority, retry disable, I/O storage, generated-file lifecycle, fallback disable, and raw headers.
 - 2026-05-18: Added `QueueSubmitResult`, `Queue.submitDetailed(...)`, and high-level `subscribe(onEnqueue:)` overloads so callers can observe request/status/response/cancel URLs and queue position when Fal returns them.
 - 2026-05-18: Added polling-based `Queue.subscribeToStatus(...)` for observing an existing request through completion with `QueueStatusDetail` callbacks and no implicit cancellation of the observed request on observer timeout.
+- 2026-05-18: Ran branch simplification review and collapsed duplicated subscribe response polling, typed queue input conversion, queue polling loops, and overgrown `RunOptions` factory surfaces while preserving the canonical initializer for advanced request controls.
 
 ## Non-Goals
 

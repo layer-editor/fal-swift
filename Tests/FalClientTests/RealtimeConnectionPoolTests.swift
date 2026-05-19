@@ -83,6 +83,50 @@ final class RealtimeConnectionPoolTests: XCTestCase {
 
         XCTAssertTrue(currentConnection === reusedConnection)
     }
+
+    func testConnectionRunsCloseCleanupWhenManuallyClosed() async throws {
+        let client = RealtimeTestClient()
+        let connection = WebSocketConnection(
+            app: "fal-ai/test",
+            client: client,
+            onMessage: { _ in },
+            onError: { _ in }
+        )
+        let cleanup = XCTestExpectation(description: "close cleanup")
+        connection.onClose = {
+            cleanup.fulfill()
+        }
+
+        connection.close()
+
+        await fulfillment(of: [cleanup], timeout: 1)
+    }
+
+    func testConnectionRunsCloseCleanupWhenSocketCloses() async throws {
+        let client = RealtimeTestClient()
+        let connection = WebSocketConnection(
+            app: "fal-ai/test",
+            client: client,
+            onMessage: { _ in },
+            onError: { _ in }
+        )
+        let cleanup = XCTestExpectation(description: "delegate close cleanup")
+        connection.onClose = {
+            cleanup.fulfill()
+        }
+        let url = try XCTUnwrap(URL(string: "wss://fal.run/fal-ai/test"))
+        let session = URLSession(configuration: .ephemeral)
+        let task = session.webSocketTask(with: url)
+
+        connection.urlSession(
+            session,
+            webSocketTask: task,
+            didCloseWith: .normalClosure,
+            reason: nil
+        )
+
+        await fulfillment(of: [cleanup], timeout: 1)
+    }
 }
 
 private struct RealtimeTestClient: Client {

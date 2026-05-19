@@ -32,15 +32,7 @@ public struct QueueSubmitResult: Decodable, Equatable, Sendable {
 
 public extension Queue {
     func submit(_ id: String, input: (some Encodable) = EmptyInput.empty, webhookUrl: String? = nil) async throws -> String {
-        // Convert some Encodable to Payload, so the underlying call can inspect the input more freely
-        var inputPayload: Payload? = nil
-        if !(input is EmptyInput) {
-            let data = try encodeTypedInputRejectingBinaryData(
-                input,
-                message: "Typed Encodable values containing Data are not supported for automatic upload yet. Use Payload.data so binary values can be uploaded before request encoding."
-            )
-            inputPayload = try Payload.create(fromJSON: data)
-        }
+        let inputPayload = try typedQueueInputPayload(from: input)
         return try await submit(id, input: inputPayload, webhookUrl: webhookUrl)
     }
 
@@ -49,14 +41,7 @@ public extension Queue {
         input: (some Encodable) = EmptyInput.empty,
         webhookUrl: String? = nil
     ) async throws -> QueueSubmitResult {
-        var inputPayload: Payload? = nil
-        if !(input is EmptyInput) {
-            let data = try encodeTypedInputRejectingBinaryData(
-                input,
-                message: "Typed Encodable values containing Data are not supported for automatic upload yet. Use Payload.data so binary values can be uploaded before request encoding."
-            )
-            inputPayload = try Payload.create(fromJSON: data)
-        }
+        let inputPayload = try typedQueueInputPayload(from: input)
         return try await submitDetailed(id, input: inputPayload, webhookUrl: webhookUrl)
     }
 
@@ -66,14 +51,7 @@ public extension Queue {
         webhookUrl: String? = nil,
         options: RunOptions
     ) async throws -> String {
-        var inputPayload: Payload? = nil
-        if !(input is EmptyInput) {
-            let data = try encodeTypedInputRejectingBinaryData(
-                input,
-                message: "Typed Encodable values containing Data are not supported for automatic upload yet. Use Payload.data so binary values can be uploaded before request encoding."
-            )
-            inputPayload = try Payload.create(fromJSON: data)
-        }
+        let inputPayload = try typedQueueInputPayload(from: input)
         return try await submit(id, input: inputPayload, webhookUrl: webhookUrl, options: options)
     }
 
@@ -83,14 +61,7 @@ public extension Queue {
         webhookUrl: String? = nil,
         options: RunOptions
     ) async throws -> QueueSubmitResult {
-        var inputPayload: Payload? = nil
-        if !(input is EmptyInput) {
-            let data = try encodeTypedInputRejectingBinaryData(
-                input,
-                message: "Typed Encodable values containing Data are not supported for automatic upload yet. Use Payload.data so binary values can be uploaded before request encoding."
-            )
-            inputPayload = try Payload.create(fromJSON: data)
-        }
+        let inputPayload = try typedQueueInputPayload(from: input)
         return try await submitDetailed(id, input: inputPayload, webhookUrl: webhookUrl, options: options)
     }
 
@@ -101,4 +72,15 @@ public extension Queue {
             options: .route(queueRequestPath(for: requestId), withMethod: .get)
         )
     }
+}
+
+private func typedQueueInputPayload(from input: some Encodable) throws -> Payload? {
+    guard !(input is EmptyInput) else {
+        return nil
+    }
+    let data = try encodeTypedInputRejectingBinaryData(
+        input,
+        message: "Typed Encodable values containing Data are not supported for automatic upload yet. Use Payload.data so binary values can be uploaded before request encoding."
+    )
+    return try Payload.create(fromJSON: data)
 }

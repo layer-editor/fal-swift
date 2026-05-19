@@ -92,81 +92,29 @@ public struct RunOptions: RequestOptions, Sendable {
         self.isFallbackDisabled = disableFallback
     }
 
-    public static func withMethod(
-        _ method: HttpMethod,
-        headers: [String: String] = [:],
-        startTimeout: TimeInterval? = nil,
-        hint: String? = nil,
-        queuePriority: QueuePriority? = nil,
-        disableRetries: Bool = false,
-        storeInputOutput: Bool? = nil,
-        objectLifecyclePreference: FalObjectLifecyclePreference? = nil,
-        disableFallback: Bool = false
-    ) -> RunOptions {
+    public static func withMethod(_ method: HttpMethod) -> RunOptions {
         RunOptions(
-            path: "",
-            httpMethod: method,
-            headers: headers,
-            startTimeout: startTimeout,
-            hint: hint,
-            queuePriority: queuePriority,
-            disableRetries: disableRetries,
-            storeInputOutput: storeInputOutput,
-            objectLifecyclePreference: objectLifecyclePreference,
-            disableFallback: disableFallback
+            httpMethod: method
         )
     }
 
     public static func withTimeout(
         _ timeout: TimeInterval,
-        method: HttpMethod = .post,
-        headers: [String: String] = [:],
-        startTimeout: TimeInterval? = nil,
-        hint: String? = nil,
-        queuePriority: QueuePriority? = nil,
-        disableRetries: Bool = false,
-        storeInputOutput: Bool? = nil,
-        objectLifecyclePreference: FalObjectLifecyclePreference? = nil,
-        disableFallback: Bool = false
+        method: HttpMethod = .post
     ) -> RunOptions {
         RunOptions(
-            path: "",
             httpMethod: method,
-            timeoutInterval: timeout,
-            headers: headers,
-            startTimeout: startTimeout,
-            hint: hint,
-            queuePriority: queuePriority,
-            disableRetries: disableRetries,
-            storeInputOutput: storeInputOutput,
-            objectLifecyclePreference: objectLifecyclePreference,
-            disableFallback: disableFallback
+            timeoutInterval: timeout
         )
     }
 
     public static func route(
         _ path: String,
-        withMethod method: HttpMethod = .post,
-        headers: [String: String] = [:],
-        startTimeout: TimeInterval? = nil,
-        hint: String? = nil,
-        queuePriority: QueuePriority? = nil,
-        disableRetries: Bool = false,
-        storeInputOutput: Bool? = nil,
-        objectLifecyclePreference: FalObjectLifecyclePreference? = nil,
-        disableFallback: Bool = false
+        withMethod method: HttpMethod = .post
     ) -> RunOptions {
         RunOptions(
             path: path,
-            httpMethod: method,
-            headers: headers,
-            startTimeout: startTimeout,
-            hint: hint,
-            queuePriority: queuePriority,
-            disableRetries: disableRetries,
-            storeInputOutput: storeInputOutput,
-            objectLifecyclePreference: objectLifecyclePreference,
-            disableFallback: disableFallback
+            httpMethod: method
         )
     }
 }
@@ -248,7 +196,7 @@ public extension Client {
         onQueueUpdate: OnQueueUpdate? = nil
     ) async throws -> Payload {
         let requestId = try await queue.submit(app, input: input, options: options)
-        try await pollQueueUntilCompleted(
+        return try await queueResponseAfterPolling(
             queue: queue,
             app: app,
             requestId: requestId,
@@ -257,7 +205,6 @@ public extension Client {
             includeLogs: includeLogs,
             onQueueUpdate: onQueueUpdate
         )
-        return try await queue.response(app, of: requestId)
     }
 
     func subscribe(
@@ -272,7 +219,7 @@ public extension Client {
     ) async throws -> Payload {
         let submitResult = try await queue.submitDetailed(app, input: input, options: options)
         onEnqueue(submitResult)
-        try await pollQueueUntilCompleted(
+        return try await queueResponseAfterPolling(
             queue: queue,
             app: app,
             requestId: submitResult.requestId,
@@ -281,7 +228,6 @@ public extension Client {
             includeLogs: includeLogs,
             onQueueUpdate: onQueueUpdate
         )
-        return try await queue.response(app, of: submitResult.requestId)
     }
 
     /// Submits a request to the given app and polls for detailed queue status metadata.
@@ -298,7 +244,7 @@ public extension Client {
         onQueueStatusDetailUpdate: @escaping OnQueueStatusDetailUpdate
     ) async throws -> Payload {
         let requestId = try await queue.submit(app, input: input, options: options)
-        try await pollQueueUntilCompletedWithStatusDetails(
+        return try await queueResponseAfterStatusDetailPolling(
             queue: queue,
             app: app,
             requestId: requestId,
@@ -307,7 +253,6 @@ public extension Client {
             includeLogs: includeLogs,
             onQueueStatusDetailUpdate: onQueueStatusDetailUpdate
         )
-        return try await queue.response(app, of: requestId)
     }
 
     func subscribe(
@@ -318,12 +263,16 @@ public extension Client {
         includeLogs: Bool = false,
         onQueueUpdate: OnQueueUpdate? = nil
     ) async throws -> Payload {
-        try await subscribe(to: app,
-                            input: input,
-                            pollInterval: pollInterval,
-                            timeout: timeout,
-                            includeLogs: includeLogs,
-                            onQueueUpdate: onQueueUpdate)
+        let requestId = try await queue.submit(app, input: input)
+        return try await queueResponseAfterPolling(
+            queue: queue,
+            app: app,
+            requestId: requestId,
+            pollInterval: pollInterval,
+            timeout: timeout,
+            includeLogs: includeLogs,
+            onQueueUpdate: onQueueUpdate
+        )
     }
 
     func subscribe(
@@ -337,7 +286,7 @@ public extension Client {
     ) async throws -> Payload {
         let submitResult = try await queue.submitDetailed(app, input: input)
         onEnqueue(submitResult)
-        try await pollQueueUntilCompleted(
+        return try await queueResponseAfterPolling(
             queue: queue,
             app: app,
             requestId: submitResult.requestId,
@@ -346,7 +295,6 @@ public extension Client {
             includeLogs: includeLogs,
             onQueueUpdate: onQueueUpdate
         )
-        return try await queue.response(app, of: submitResult.requestId)
     }
 
     /// Submits a request to the given app and polls for detailed queue status metadata.
@@ -362,7 +310,7 @@ public extension Client {
         onQueueStatusDetailUpdate: @escaping OnQueueStatusDetailUpdate
     ) async throws -> Payload {
         let requestId = try await queue.submit(app, input: input)
-        try await pollQueueUntilCompletedWithStatusDetails(
+        return try await queueResponseAfterStatusDetailPolling(
             queue: queue,
             app: app,
             requestId: requestId,
@@ -371,7 +319,6 @@ public extension Client {
             includeLogs: includeLogs,
             onQueueStatusDetailUpdate: onQueueStatusDetailUpdate
         )
-        return try await queue.response(app, of: requestId)
     }
 
     @available(*, deprecated, message: "Pass the path as part of the app identifier instead")

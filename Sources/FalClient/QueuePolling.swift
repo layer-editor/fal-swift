@@ -48,40 +48,19 @@ func pollQueueUntilCompleted(
     includeLogs: Bool,
     onQueueUpdate: OnQueueUpdate?
 ) async throws {
-    let deadline = QueuePollingDeadline(timeout: timeout)
-    var isCompleted = false
-
-    do {
-        while deadline.hasRemainingTime {
-            try Task.checkCancellation()
-
-            let update: QueueStatus
-            do {
-                update = try await withQueuePollTimeout(milliseconds: deadline.remainingMilliseconds) {
-                    try await queue.status(app, of: requestId, includeLogs: includeLogs)
-                }
-            } catch FalError.queueTimeout {
-                throw FalError.queueTimeout(requestId: requestId)
-            }
-            onQueueUpdate?(update)
-
-            isCompleted = update.isCompleted
-            if isCompleted {
-                break
-            }
-
-            try await pollInterval.sleep(upTo: deadline.remainingMilliseconds)
-        }
-
-        if !isCompleted {
-            throw FalError.queueTimeout(requestId: requestId)
-        }
-    } catch {
-        if shouldCancelQueueRequest(after: error) {
-            await cancelQueueRequestIgnoringFailure(queue: queue, app: app, requestId: requestId)
-        }
-        throw error
-    }
+    _ = try await pollQueueUntilCompleted(
+        queue: queue,
+        app: app,
+        requestId: requestId,
+        pollInterval: pollInterval,
+        timeout: timeout,
+        cancelOnFailure: true,
+        fetchUpdate: {
+            try await queue.status(app, of: requestId, includeLogs: includeLogs)
+        },
+        isCompleted: \.isCompleted,
+        onUpdate: { onQueueUpdate?($0) }
+    )
 }
 
 func pollQueueUntilCompletedWithStatusDetails(
@@ -93,40 +72,61 @@ func pollQueueUntilCompletedWithStatusDetails(
     includeLogs: Bool,
     onQueueStatusDetailUpdate: @escaping OnQueueStatusDetailUpdate
 ) async throws {
-    let deadline = QueuePollingDeadline(timeout: timeout)
-    var isCompleted = false
+    _ = try await pollQueueUntilCompleted(
+        queue: queue,
+        app: app,
+        requestId: requestId,
+        pollInterval: pollInterval,
+        timeout: timeout,
+        cancelOnFailure: true,
+        fetchUpdate: {
+            try await queue.statusDetail(app, of: requestId, includeLogs: includeLogs)
+        },
+        isCompleted: \.status.isCompleted,
+        onUpdate: onQueueStatusDetailUpdate
+    )
+}
 
-    do {
-        while deadline.hasRemainingTime {
-            try Task.checkCancellation()
+func queueResponseAfterPolling<Output: Decodable>(
+    queue: Queue,
+    app: String,
+    requestId: String,
+    pollInterval: DispatchTimeInterval,
+    timeout: DispatchTimeInterval,
+    includeLogs: Bool,
+    onQueueUpdate: OnQueueUpdate?
+) async throws -> Output {
+    try await pollQueueUntilCompleted(
+        queue: queue,
+        app: app,
+        requestId: requestId,
+        pollInterval: pollInterval,
+        timeout: timeout,
+        includeLogs: includeLogs,
+        onQueueUpdate: onQueueUpdate
+    )
+    return try await queue.response(app, of: requestId)
+}
 
-            let update: QueueStatusDetail
-            do {
-                update = try await withQueuePollTimeout(milliseconds: deadline.remainingMilliseconds) {
-                    try await queue.statusDetail(app, of: requestId, includeLogs: includeLogs)
-                }
-            } catch FalError.queueTimeout {
-                throw FalError.queueTimeout(requestId: requestId)
-            }
-            onQueueStatusDetailUpdate(update)
-
-            isCompleted = update.status.isCompleted
-            if isCompleted {
-                break
-            }
-
-            try await pollInterval.sleep(upTo: deadline.remainingMilliseconds)
-        }
-
-        if !isCompleted {
-            throw FalError.queueTimeout(requestId: requestId)
-        }
-    } catch {
-        if shouldCancelQueueRequest(after: error) {
-            await cancelQueueRequestIgnoringFailure(queue: queue, app: app, requestId: requestId)
-        }
-        throw error
-    }
+func queueResponseAfterStatusDetailPolling<Output: Decodable>(
+    queue: Queue,
+    app: String,
+    requestId: String,
+    pollInterval: DispatchTimeInterval,
+    timeout: DispatchTimeInterval,
+    includeLogs: Bool,
+    onQueueStatusDetailUpdate: @escaping OnQueueStatusDetailUpdate
+) async throws -> Output {
+    try await pollQueueUntilCompletedWithStatusDetails(
+        queue: queue,
+        app: app,
+        requestId: requestId,
+        pollInterval: pollInterval,
+        timeout: timeout,
+        includeLogs: includeLogs,
+        onQueueStatusDetailUpdate: onQueueStatusDetailUpdate
+    )
+    return try await queue.response(app, of: requestId)
 }
 
 func pollQueueStatusUntilCompleted(
@@ -138,33 +138,60 @@ func pollQueueStatusUntilCompleted(
     includeLogs: Bool,
     onQueueStatusDetailUpdate: @escaping OnQueueStatusDetailUpdate
 ) async throws -> QueueStatusDetail {
+    try await pollQueueUntilCompleted(
+        queue: queue,
+        app: app,
+        requestId: requestId,
+        pollInterval: pollInterval,
+        timeout: timeout,
+        cancelOnFailure: false,
+        fetchUpdate: {
+            try await queue.statusDetail(app, of: requestId, includeLogs: includeLogs)
+        },
+        isCompleted: \.status.isCompleted,
+        onUpdate: onQueueStatusDetailUpdate
+    )
+}
+
+private func pollQueueUntilCompleted<Update: Sendable>(
+    queue: Queue,
+    app: String,
+    requestId: String,
+    pollInterval: DispatchTimeInterval,
+    timeout: DispatchTimeInterval,
+    cancelOnFailure: Bool,
+    fetchUpdate: @escaping () async throws -> Update,
+    isCompleted: (Update) -> Bool,
+    onUpdate: (Update) -> Void
+) async throws -> Update {
     let deadline = QueuePollingDeadline(timeout: timeout)
-    var latestUpdate: QueueStatusDetail?
 
-    while deadline.hasRemainingTime {
-        try Task.checkCancellation()
+    do {
+        while deadline.hasRemainingTime {
+            try Task.checkCancellation()
 
-        let update: QueueStatusDetail
-        do {
-            update = try await withQueuePollTimeout(milliseconds: deadline.remainingMilliseconds) {
-                try await queue.statusDetail(app, of: requestId, includeLogs: includeLogs)
+            let update: Update
+            do {
+                update = try await withQueuePollTimeout(milliseconds: deadline.remainingMilliseconds) {
+                    try await fetchUpdate()
+                }
+            } catch FalError.queueTimeout {
+                throw FalError.queueTimeout(requestId: requestId)
             }
-        } catch FalError.queueTimeout {
-            throw FalError.queueTimeout(requestId: requestId)
+
+            onUpdate(update)
+            if isCompleted(update) {
+                return update
+            }
+
+            try await pollInterval.sleep(upTo: deadline.remainingMilliseconds)
         }
 
-        latestUpdate = update
-        onQueueStatusDetailUpdate(update)
-
-        if update.status.isCompleted {
-            return update
+        throw FalError.queueTimeout(requestId: requestId)
+    } catch {
+        if cancelOnFailure, shouldCancelQueueRequest(after: error) {
+            await cancelQueueRequestIgnoringFailure(queue: queue, app: app, requestId: requestId)
         }
-
-        try await pollInterval.sleep(upTo: deadline.remainingMilliseconds)
+        throw error
     }
-
-    if let latestUpdate, latestUpdate.status.isCompleted {
-        return latestUpdate
-    }
-    throw FalError.queueTimeout(requestId: requestId)
 }

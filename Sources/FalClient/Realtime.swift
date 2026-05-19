@@ -169,6 +169,7 @@ final class WebSocketConnection: NSObject, URLSessionWebSocketDelegate, @uncheck
     let client: Client
     let onMessage: (WebSocketMessage) -> Void
     let onError: (Error) -> Void
+    var onClose: () -> Void = {}
 
     private let stateQueue = DispatchQueue(label: "ai.fal.WebSocketConnection.\(UUID().uuidString)")
     private let session = URLSession(configuration: .default)
@@ -326,6 +327,7 @@ final class WebSocketConnection: NSObject, URLSessionWebSocketDelegate, @uncheck
             self.task?.cancel(with: .normalClosure, reason: "Programmatically closed".data(using: .utf8))
             self.task = nil
             self.enqueuedMessage = nil
+            self.onClose()
         }
     }
 
@@ -357,6 +359,7 @@ final class WebSocketConnection: NSObject, URLSessionWebSocketDelegate, @uncheck
                 self.onError(FalRealtimeError.connectionError(code: code.rawValue))
             }
             self.task = nil
+            self.onClose()
         }
     }
 }
@@ -488,7 +491,7 @@ extension Realtime {
     ) -> BaseRealtimeConnection<InputType> {
         let key = "\(app):\(connectionKey)"
         let ws = connectionPool.connection(for: key) {
-            WebSocketConnection(
+            let connection = WebSocketConnection(
                 app: app,
                 client: client,
                 onMessage: { message in
@@ -503,6 +506,13 @@ extension Realtime {
                     completion(.failure(error))
                 }
             )
+            connection.onClose = { [weak connection] in
+                guard let connection else {
+                    return
+                }
+                connectionPool.removeConnection(for: key, matching: connection)
+            }
+            return connection
         }
 
         let sendData: (WebSocketMessage) -> Void = { data in
@@ -515,7 +525,6 @@ extension Realtime {
         let send: SendFunction = throttleInterval.milliseconds > 0 ? throttle(sendData, throttleInterval: throttleInterval) : sendData
         let close: CloseFunction = {
             ws.close()
-            connectionPool.removeConnection(for: key, matching: ws)
         }
         return createRealtimeConnection(send, close)
     }
