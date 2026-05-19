@@ -97,7 +97,7 @@ struct URLSessionHTTPTransport: HTTPTransport {
     }
 }
 
-private final class RedirectValidatingURLSessionDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+final class RedirectValidatingURLSessionDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     private let validator: @Sendable (URL) -> Bool
     private let lock = NSLock()
     private var _rejectedRedirectURL: URL?

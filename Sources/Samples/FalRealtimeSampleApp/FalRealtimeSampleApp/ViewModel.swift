@@ -21,10 +21,12 @@ struct TurboResponse: Decodable {
     let images: [FalImage]
 }
 
+@MainActor
 class LiveImage: ObservableObject {
     @Published var currentImage: Data?
 
     private var connection: TypedRealtimeConnection<TurboInput>?
+    private var imageLoadTask: Task<Void, Never>?
 
     init() {
         connection = try? fal.realtime.connect(
@@ -33,13 +35,33 @@ class LiveImage: ObservableObject {
             throttleInterval: .never
         ) { (result: Result<TurboResponse, Error>) in
             if case let .success(data) = result,
-               case let imageData = data.images[0].content.data
+               let image = data.images.first
             {
-                DispatchQueue.main.async {
-                    self.currentImage = imageData
+                Task { [weak self] in
+                    await self?.load(image)
                 }
             }
             if case let .failure(error) = result {
+                print("-------------- Error")
+                print(error)
+            }
+        }
+    }
+
+    deinit {
+        imageLoadTask?.cancel()
+        connection?.close()
+    }
+
+    private func load(_ image: FalImage) {
+        imageLoadTask?.cancel()
+        imageLoadTask = Task { [weak self] in
+            do {
+                let imageData = try await image.loadData()
+                try Task.checkCancellation()
+                self?.currentImage = imageData
+            } catch is CancellationError {
+            } catch {
                 print("-------------- Error")
                 print(error)
             }

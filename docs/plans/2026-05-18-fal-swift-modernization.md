@@ -142,9 +142,12 @@ External references checked:
   - Added explicit custom realtime `path:` overloads for `Payload` and typed `Codable` APIs, with canonical path validation and pool-key normalization.
   - `swift build --target FalClient -Xswiftc -strict-concurrency=complete` now completes cleanly for the package target.
 
-- [ ] Deprecate or replace unsafe synchronous media helpers.
-  - `FalImageContent.data` force unwraps URLs and performs blocking network I/O.
-  - Add async throwing load helpers before deprecating the property.
+- [x] Deprecate or replace unsafe synchronous media helpers.
+  - Added async throwing `loadData(using:)` helpers for `FalImageContent` and `FalImage`.
+  - Added injectable `FalImageContentDataLoading` and URLSession-backed default loading.
+  - URL-backed image loading now uses the same safe external HTTPS URL policy as storage and rejects unsafe redirects before following them.
+  - Deprecated `FalImageContent.data`; URL-backed content no longer performs synchronous URL I/O through the property.
+  - Updated the realtime sample to cancel stale image loads and avoid blocking image data access.
 
 ## P2: Ergonomics, Docs, and Release Quality
 
@@ -180,7 +183,6 @@ High-leverage implementation work that remains after the completed queue, stream
 - Storage security/parity: evaluate direct `v3.fal.media` token flow, fallback repositories, multipart upload, and whether storage PUTs should use DNS resolution or a documented storage-host allowlist to mitigate public hostnames that resolve to private addresses.
 - Client reliability: decide whether any future retry knobs should be public configuration.
 - Realtime follow-up: refresh README/sample guidance and decide whether a public custom token-provider hook is useful for this fork.
-- Media ergonomics: replace unsafe synchronous `FalImageContent.data` with async throwing helpers before deprecating it.
 - Release readiness: README refresh, markdown guides, sample cleanup/legacy labeling, CI, changelog, contributing guide, and user-agent/package version cleanup.
 
 ## Drill-Down Docs
@@ -208,6 +210,7 @@ High-leverage implementation work that remains after the completed queue, stream
 - 2026-05-18: Hardened storage URL privacy and redirect behavior by redacting invalid signed URL associated values, rejecting numeric IPv6 loopback/private aliases, blocking unsafe presigned PUT redirects in the built-in URLSession transport, and documenting the remaining DNS trust-policy question.
 - 2026-05-18: Added an internal bounded retry policy for transient queue status/result and presigned storage PUT failures, while keeping direct run, direct stream, storage initiate, cancellation, and fal user-timeout responses single-attempt.
 - 2026-05-18: Added explicit payload subscribe timeout/cancellation coverage, including status-detail cancellation, cancel-failure preservation, and concrete queue dispatch for payload option overloads.
+- 2026-05-18: Replaced active Fal image byte loading with async throwing `loadData(using:)` helpers, safe external HTTPS URL and redirect validation, URLSession loader tests, and a realtime sample update that cancels stale image loads.
 
 ## Non-Goals
 
