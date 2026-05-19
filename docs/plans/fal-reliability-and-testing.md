@@ -238,12 +238,13 @@ Current risks:
 
 - The global connection pool is now protected by `RealtimeConnectionPool`.
 - `WebSocketConnection` mutable state is now serialized through one state queue.
-- Remaining risk: there is no fake WebSocket/session boundary, so open/receive/close flows are still mostly covered by compile-time checks and pool unit tests rather than full lifecycle tests.
-- Token refresh uses fixed assumptions and older endpoint shape.
+- `WebSocketConnection` now has an internal fakeable WebSocket task boundary.
+- Token refresh now uses the current realtime token endpoint and fails closed on malformed token JSON.
+- Remaining risk: the realtime implementation still uses a queue-backed class rather than an actor, and token refresh is internal-only.
 
 Plan:
 
-- Add fake WebSocket/session boundary tests around connection open, queued send flush, receive errors, and close behavior.
+- Fake WebSocket/session boundary tests now cover connection open, queued send flush, FIFO queued sends, receive errors, close behavior, and close-during-token-refresh behavior.
 - Consider an actor-based connection implementation if the session boundary is refactored more deeply.
 - Keep public realtime API stable while making token refresh and lifecycle behavior stricter.
 

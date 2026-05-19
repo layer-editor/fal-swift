@@ -137,6 +137,9 @@ External references checked:
 - [x] Make realtime state concurrency-safe.
   - Replaced the global mutable connection dictionary with a synchronized `RealtimeConnectionPool`.
   - Serialized mutable WebSocket connection state through a single state queue.
+  - Added an internal fakeable WebSocket task boundary with lifecycle tests for open, receive errors, close, close-during-token-refresh, and FIFO queued send flushing.
+  - Updated realtime token refresh to `rest.fal.ai/tokens/realtime` with current `duration`/`allowed_apps` body shape and fail-closed token parsing.
+  - Added explicit custom realtime `path:` overloads for `Payload` and typed `Codable` APIs, with canonical path validation and pool-key normalization.
   - `swift build --target FalClient -Xswiftc -strict-concurrency=complete` now completes cleanly for the package target.
 
 - [ ] Deprecate or replace unsafe synchronous media helpers.
@@ -176,7 +179,7 @@ High-leverage implementation work that remains after the completed queue, stream
 
 - Storage security/parity: evaluate direct `v3.fal.media` token flow, fallback repositories, multipart upload, and whether storage PUTs should use DNS resolution or a documented storage-host allowlist to mitigate public hostnames that resolve to private addresses.
 - Client reliability: decide whether any future retry knobs should be public configuration.
-- Realtime parity: update token/path behavior against current Fal clients and add fake WebSocket/session boundary tests.
+- Realtime follow-up: refresh README/sample guidance and decide whether a public custom token-provider hook is useful for this fork.
 - Media ergonomics: replace unsafe synchronous `FalImageContent.data` with async throwing helpers before deprecating it.
 - Release readiness: README refresh, markdown guides, sample cleanup/legacy labeling, CI, changelog, contributing guide, and user-agent/package version cleanup.
 

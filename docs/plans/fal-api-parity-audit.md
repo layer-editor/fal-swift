@@ -4,7 +4,7 @@ This is the living parity matrix for `FalClient` against current fal model API d
 
 ## Summary
 
-The Swift client now covers the core model API workflows: direct `run`, queue-backed `subscribe`, manual queue `submit/status/response/cancel`, queue status streaming, direct model `/stream`, realtime WebSocket support, dynamic `Payload`, and `Codable` overloads. The remaining gaps are narrower: realtime token/path parity, storage direct-CDN/fallback/multipart behavior, release docs, sample cleanup, and CI/release metadata.
+The Swift client now covers the core model API workflows: direct `run`, queue-backed `subscribe`, manual queue `submit/status/response/cancel`, queue status streaming, direct model `/stream`, realtime WebSocket support, dynamic `Payload`, and `Codable` overloads. The remaining gaps are narrower: storage direct-CDN/fallback/multipart behavior, realtime docs/sample polish, release docs, sample cleanup, and CI/release metadata.
 
 ## Feature Matrix
 
@@ -18,7 +18,7 @@ The Swift client now covers the core model API workflows: direct `run`, queue-ba
 | `queue.cancel` | Present | Documented `PUT /requests/{request_id}/cancel` endpoint | Done |
 | `queue.streamStatus` | Present | Documented SSE endpoint implemented as `AsyncThrowingStream<QueueStatusDetail, Error>` | Done |
 | `stream` | Present | Official method for `/stream` SSE endpoints | Done |
-| realtime | Present, concurrency-hardened | Still needs custom path/token-provider parity and deeper fake socket tests | P1 |
+| realtime | Present, concurrency-hardened, current token endpoint, custom path overloads, and fake socket lifecycle tests | Still needs docs/sample refresh and a decision on whether to expose custom token providers | Mostly Done |
 | platform headers | Present | Server-side platform headers are modeled; client-side transient retry is implemented for queue status/result and storage PUT | Done |
 | namespaced endpoints | Present | Peer clients preserve namespace/path pieces | Done |
 | storage uploads | Improved | Initiates `fal-cdn-v3` uploads with file-name and lifecycle options; direct CDN, fallback, and multipart remain | P1/P2 |
@@ -115,6 +115,24 @@ Still separate from this small chunk:
 - Fallback repositories.
 - Multipart upload for large files.
 - DNS rebinding/private-DNS mitigation for public-looking storage hostnames, likely through an allowlist or preflight resolution policy.
+
+## Realtime Parity
+
+Implemented:
+
+- Realtime token refresh now uses `https://rest.fal.ai/tokens/realtime`.
+- Token requests send `duration` and `allowed_apps` using the full canonical realtime endpoint path.
+- Token parsing accepts the current `{ "token": "..." }` response shape, preserves legacy JSON-string/raw-string compatibility, and fails closed for malformed JSON objects or empty tokens.
+- Realtime URL construction avoids duplicating `/realtime` when the app ID already includes an endpoint path.
+- Public `Payload` and typed `Codable` realtime APIs now support explicit custom `path:` overloads.
+- Custom realtime paths are normalized once and rejected if they contain query strings, fragments, absolute URLs, dot segments, or encoded slash/backslash segments.
+- The connection pool key uses canonical endpoint identity so equivalent default paths reuse the same logical connection.
+- The WebSocket layer has an internal fakeable task factory boundary covered by tests for open, queued send flush, FIFO queued sends, receive errors, manual close, delegate close, and close-during-token-refresh.
+
+Still separate from this chunk:
+
+- Decide whether this fork should expose a public custom realtime token provider. The current implementation keeps token refresh internal and credential-based.
+- Refresh realtime README/sample guidance, including proxy/auth warnings for client apps.
 
 ## References
 
