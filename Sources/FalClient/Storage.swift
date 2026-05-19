@@ -39,6 +39,7 @@ public struct StorageUploadRepository: Equatable, Sendable {
     enum Kind: Equatable, Sendable {
         case falCDNV3PresignedURL
         case directFalCDNV3
+        case directFalMedia
     }
 
     let kind: Kind
@@ -52,6 +53,9 @@ public struct StorageUploadRepository: Equatable, Sendable {
 
     /// Direct Fal CDN v3 upload using a short-lived CDN token from fal's REST API.
     public static let directFalCDNV3 = StorageUploadRepository(kind: .directFalCDNV3)
+
+    /// Direct upload to the `fal.media` fallback endpoint.
+    public static let directFalMedia = StorageUploadRepository(kind: .directFalMedia)
 }
 
 /// Controls automatic multipart storage uploads.
@@ -316,6 +320,8 @@ struct StorageClient: Storage {
             return try await uploadUsingPresignedURL(data: data, ofType: type, options: options)
         case .directFalCDNV3:
             return try await uploadDirectlyToFalCDNV3(data: data, ofType: type, options: options)
+        case .directFalMedia:
+            return try await uploadDirectlyToFalMedia(data: data, ofType: type, options: options)
         }
     }
 
@@ -346,6 +352,43 @@ struct StorageClient: Storage {
         }
 
         return uploadUrl.fileUrl
+    }
+
+    private func uploadDirectlyToFalMedia(data: Data, ofType type: FileType, options: StorageUploadOptions) async throws -> String {
+        let fileName = options.normalizedFileName(for: type)
+        let uploadUrlString = "https://fal.media/files/upload"
+        guard let url = URL.safeFalDirectMediaUploadURL(from: uploadUrlString) else {
+            throw FalError.invalidUrl(url: uploadUrlString.redactedURLForDescription)
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.httpBody = data
+        request.setValue(try client.falMediaAuthorizationHeader(), forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue(type.mimeType, forHTTPHeaderField: "Content-Type")
+        request.setValue(String(data.count), forHTTPHeaderField: "Content-Length")
+        request.setValue(fileName, forHTTPHeaderField: "X-Fal-File-Name")
+        if let objectLifecyclePreference = options.objectLifecyclePreference {
+            let lifecycleHeader = try objectLifecyclePreference.headerValue()
+            request.setValue(lifecycleHeader, forHTTPHeaderField: "X-Fal-Object-Lifecycle")
+            request.setValue(lifecycleHeader, forHTTPHeaderField: "X-Fal-Object-Lifecycle-Preference")
+        }
+
+        do {
+            let response = try await client.resolvedHTTPTransport.data(
+                for: request,
+                validatingRedirectsWith: { URL.safeFalDirectMediaUploadURL($0) }
+            )
+            try client.checkResponseStatus(for: response.response, withData: response.data)
+            let uploadResponse = try JSONDecoder().decode(DirectStorageUploadResponse.self, from: response.data)
+            guard URL.safeFalStorageFileURL(from: uploadResponse.accessURL) != nil else {
+                throw FalError.invalidUrl(url: uploadResponse.accessURL.redactedURLForDescription)
+            }
+            return uploadResponse.accessURL
+        } catch {
+            throw TerminalStorageUploadError(underlying: error)
+        }
     }
 
     private func uploadDirectlyToFalCDNV3(data: Data, ofType type: FileType, options: StorageUploadOptions) async throws -> String {
@@ -597,6 +640,28 @@ private extension HTTPURLResponse {
     }
 }
 
+private extension Client {
+    func falMediaAuthorizationHeader() throws -> String {
+        let credentials = config.credentials.rawValue
+        guard !credentials.isEmpty else {
+            throw FalError.unsupportedInput(message: "Fal credentials are required for direct fal.media uploads.")
+        }
+
+        switch config.authScheme {
+        case .bearer:
+            return "Bearer \(credentials)"
+        case .key:
+            let parts = credentials.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
+            guard parts.count == 2, !parts[1].isEmpty else {
+                throw FalError.unsupportedInput(
+                    message: "Direct fal.media uploads require key credentials in '<id>:<secret>' format."
+                )
+            }
+            return "Bearer \(parts[1])"
+        }
+    }
+}
+
 extension URL {
     static func safeExternalHTTPSURL(from string: String) -> URL? {
         guard let url = URL(string: string),
@@ -656,6 +721,24 @@ extension URL {
         return host.isAllowedDirectFalCDNV3UploadHost
     }
 
+    static func safeFalDirectMediaUploadURL(from string: String) -> URL? {
+        guard let url = URL(string: string),
+              safeFalDirectMediaUploadURL(url)
+        else {
+            return nil
+        }
+        return url
+    }
+
+    static func safeFalDirectMediaUploadURL(_ url: URL) -> Bool {
+        guard safeExternalHTTPSURL(url),
+              let host = url.host?.normalizedHostForPolicy
+        else {
+            return false
+        }
+        return host.isAllowedDirectFalMediaUploadHost
+    }
+
     static func safeFalStorageFileURL(from string: String) -> URL? {
         guard let url = URL(string: string),
               safeFalStorageFileURL(url)
@@ -701,6 +784,10 @@ private extension String {
 
     var isAllowedDirectFalCDNV3UploadHost: Bool {
         isEqualToOrSubdomain(of: "v3.fal.media")
+    }
+
+    var isAllowedDirectFalMediaUploadHost: Bool {
+        isEqualToOrSubdomain(of: "fal.media")
     }
 
     var isAllowedFalStorageFileHost: Bool {
