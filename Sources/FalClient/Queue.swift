@@ -128,7 +128,13 @@ public extension Queue {
 }
 
 extension Queue {
-    func runOnQueue<Output: Decodable>(_ app: String, input: Payload?, queryParams params: [String: Any] = [:], options: RunOptions = .withMethod(.post)) async throws -> Output {
+    func runOnQueue<Output: Decodable>(
+        _ app: String,
+        input: Payload?,
+        queryParams params: [String: Any] = [:],
+        options: RunOptions = .withMethod(.post),
+        retryPolicy: RetryPolicy = .none
+    ) async throws -> Output {
         var requestInput = input
         if let input, input.hasBinaryData {
             guard options.httpMethod != .get else {
@@ -147,7 +153,13 @@ extension Queue {
         }
 
         let url = buildUrl(fromId: app, path: options.path, subdomain: "queue")
-        let data = try await client.sendRequest(to: url, input: requestInput?.json(), queryParams: queryParams, options: options)
+        let data = try await client.sendRequest(
+            to: url,
+            input: requestInput?.json(),
+            queryParams: queryParams,
+            options: options,
+            retryPolicy: retryPolicy
+        )
 
         let decoder = JSONDecoder()
         return try decoder.decode(Output.self, from: data)
@@ -185,7 +197,8 @@ public struct QueueClient: QueueStatusDetailProviding, QueueCancellationProvidin
             queryParams: [
                 "logs": includeLogs ? 1 : 0,
             ],
-            options: .route(queueRequestPath(for: requestId, suffix: "/status"), withMethod: .get)
+            options: .route(queueRequestPath(for: requestId, suffix: "/status"), withMethod: .get),
+            retryPolicy: .transientRequest
         )
         return result
     }
@@ -216,7 +229,8 @@ public struct QueueClient: QueueStatusDetailProviding, QueueCancellationProvidin
         return try await runOnQueue(
             AppId.parse(id: id).queueBasePath,
             input: nil as Payload?,
-            options: .route(queueRequestPath(for: requestId), withMethod: .get)
+            options: .route(queueRequestPath(for: requestId), withMethod: .get),
+            retryPolicy: .transientRequest
         )
     }
 }

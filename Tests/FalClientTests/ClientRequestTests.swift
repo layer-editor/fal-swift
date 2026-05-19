@@ -457,6 +457,104 @@ final class ClientRequestTests: XCTestCase {
         XCTAssertEqual(detail.metrics?["inference_time"], .double(1.25))
     }
 
+    func testQueueStatusRetriesTransientHTTPResponses() async throws {
+        var attempts = 0
+        requestHandler = { request in
+            attempts += 1
+            if attempts == 1 {
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 503,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!
+                let data = #"{"detail":"temporarily unavailable"}"#.data(using: .utf8)!
+                return HTTPTransportResponse(data: data, response: response)
+            }
+
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: nil
+            )!
+            let data = """
+            {
+              "status": "COMPLETED",
+              "request_id": "request-id",
+              "response_url": "https://queue.fal.run/fal-ai/flux/schnell/requests/request-id"
+            }
+            """.data(using: .utf8)!
+            return HTTPTransportResponse(data: data, response: response)
+        }
+
+        let client = TestRequestClient(config: ClientConfig(), httpTransport: transport)
+        let queue = QueueClient(client: client)
+
+        let detail = try await queue.statusDetail("fal-ai/flux/schnell", of: "request-id", includeLogs: false)
+
+        XCTAssertTrue(detail.status.isCompleted)
+        XCTAssertEqual(detail.responseUrl, "https://queue.fal.run/fal-ai/flux/schnell/requests/request-id")
+        XCTAssertEqual(attempts, 2)
+    }
+
+    func testQueueStatusDoesNotRetryUserTimeoutResponses() async throws {
+        var attempts = 0
+        requestHandler = { request in
+            attempts += 1
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 504,
+                httpVersion: nil,
+                headerFields: [
+                    "X-Fal-Request-Timeout-Type": "user",
+                ]
+            )!
+            let data = #"{"detail":"request timed out"}"#.data(using: .utf8)!
+            return HTTPTransportResponse(data: data, response: response)
+        }
+
+        let client = TestRequestClient(config: ClientConfig(), httpTransport: transport)
+        let queue = QueueClient(client: client)
+
+        do {
+            _ = try await queue.statusDetail("fal-ai/flux/schnell", of: "request-id", includeLogs: false)
+            XCTFail("Expected user timeout HTTP error")
+        } catch FalError.httpError(let error) {
+            XCTAssertEqual(error.statusCode, 504)
+            XCTAssertTrue(error.isUserTimeout)
+        }
+
+        XCTAssertEqual(attempts, 1)
+    }
+
+    func testQueueStatusStopsAfterRetryLimit() async throws {
+        var attempts = 0
+        requestHandler = { request in
+            attempts += 1
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 503,
+                httpVersion: nil,
+                headerFields: nil
+            )!
+            let data = #"{"detail":"temporarily unavailable"}"#.data(using: .utf8)!
+            return HTTPTransportResponse(data: data, response: response)
+        }
+
+        let client = TestRequestClient(config: ClientConfig(), httpTransport: transport)
+        let queue = QueueClient(client: client)
+
+        do {
+            _ = try await queue.statusDetail("fal-ai/flux/schnell", of: "request-id", includeLogs: false)
+            XCTFail("Expected transient HTTP error after retry limit")
+        } catch FalError.httpError(let error) {
+            XCTAssertEqual(error.statusCode, 503)
+        }
+
+        XCTAssertEqual(attempts, 3)
+    }
+
     func testTypedQueueResponsePreservesEndpointPathSegments() async throws {
         requestHandler = { request in
             let response = HTTPURLResponse(
@@ -476,6 +574,33 @@ final class ClientRequestTests: XCTestCase {
 
         let request = try XCTUnwrap(transport.requests.first)
         XCTAssertEqual(request.url?.path, "/fal-ai/flux/schnell/requests/request-id")
+    }
+
+    func testQueueResponseRetriesTransientTransportErrors() async throws {
+        var attempts = 0
+        requestHandler = { request in
+            attempts += 1
+            if attempts == 1 {
+                throw URLError(.networkConnectionLost)
+            }
+
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: nil
+            )!
+            let data = #"{"value":"ok"}"#.data(using: .utf8)!
+            return HTTPTransportResponse(data: data, response: response)
+        }
+
+        let client = TestRequestClient(config: ClientConfig(), httpTransport: transport)
+        let queue = QueueClient(client: client)
+
+        let output: RequestOutput = try await queue.response("fal-ai/flux/schnell", of: "request-id")
+
+        XCTAssertEqual(output.value, "ok")
+        XCTAssertEqual(attempts, 2)
     }
 
     func testTypedQueueResponseEncodesRequestIdAsSinglePathSegment() async throws {

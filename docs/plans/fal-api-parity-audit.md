@@ -4,7 +4,7 @@ This is the living parity matrix for `FalClient` against current fal model API d
 
 ## Summary
 
-The Swift client now covers the core model API workflows: direct `run`, queue-backed `subscribe`, manual queue `submit/status/response/cancel`, queue status streaming, direct model `/stream`, realtime WebSocket support, dynamic `Payload`, and `Codable` overloads. The remaining gaps are narrower: realtime token/path parity, client-side retry policy, storage direct-CDN/fallback/multipart behavior, release docs, sample cleanup, and CI/release metadata.
+The Swift client now covers the core model API workflows: direct `run`, queue-backed `subscribe`, manual queue `submit/status/response/cancel`, queue status streaming, direct model `/stream`, realtime WebSocket support, dynamic `Payload`, and `Codable` overloads. The remaining gaps are narrower: realtime token/path parity, storage direct-CDN/fallback/multipart behavior, release docs, sample cleanup, and CI/release metadata.
 
 ## Feature Matrix
 
@@ -19,7 +19,7 @@ The Swift client now covers the core model API workflows: direct `run`, queue-ba
 | `queue.streamStatus` | Present | Documented SSE endpoint implemented as `AsyncThrowingStream<QueueStatusDetail, Error>` | Done |
 | `stream` | Present | Official method for `/stream` SSE endpoints | Done |
 | realtime | Present, concurrency-hardened | Still needs custom path/token-provider parity and deeper fake socket tests | P1 |
-| platform headers | Present | Retry policy behavior is still client-side follow-up; server-side platform headers are modeled | Done/P1 |
+| platform headers | Present | Server-side platform headers are modeled; client-side transient retry is implemented for queue status/result and storage PUT | Done |
 | namespaced endpoints | Present | Peer clients preserve namespace/path pieces | Done |
 | storage uploads | Improved | Initiates `fal-cdn-v3` uploads with file-name and lifecycle options; direct CDN, fallback, and multipart remain | P1/P2 |
 

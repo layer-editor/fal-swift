@@ -182,11 +182,13 @@ struct StorageClient: Storage {
         request.setValue(type.mimeType, forHTTPHeaderField: "Content-Type")
         request.setValue(String(data.count), forHTTPHeaderField: "Content-Length")
 
-        let transportResponse = try await client.resolvedHTTPTransport.data(
-            for: request,
-            validatingRedirectsWith: { URL.safeExternalHTTPSURL($0) }
-        )
-        try client.checkResponseStatus(for: transportResponse.response, withData: transportResponse.data)
+        try await retrying(policy: .transientRequest) {
+            let transportResponse = try await client.resolvedHTTPTransport.data(
+                for: request,
+                validatingRedirectsWith: { URL.safeExternalHTTPSURL($0) }
+            )
+            try client.checkResponseStatus(for: transportResponse.response, withData: transportResponse.data)
+        }
 
         return uploadUrl.fileUrl
     }

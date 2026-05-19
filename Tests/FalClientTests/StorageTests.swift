@@ -110,6 +110,83 @@ final class StorageTests: XCTestCase {
         XCTAssertNil(putRequest.value(forHTTPHeaderField: "X-Fal-Object-Lifecycle-Preference"))
     }
 
+    func testUploadRetriesTransientPutResponses() async throws {
+        var putAttempts = 0
+        let transport = RecordingHTTPTransport { request in
+            if request.url?.host == "rest.fal.ai" {
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!
+                let data = """
+                {
+                  "file_url": "https://fal.media/retried.png",
+                  "upload_url": "https://storage.googleapis.com/upload"
+                }
+                """.data(using: .utf8)!
+                return HTTPTransportResponse(data: data, response: response)
+            }
+
+            putAttempts += 1
+            if putAttempts == 1 {
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 503,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!
+                let data = #"{"detail":"temporarily unavailable"}"#.data(using: .utf8)!
+                return HTTPTransportResponse(data: data, response: response)
+            }
+
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: nil
+            )!
+            return HTTPTransportResponse(data: Data(), response: response)
+        }
+        let storage: Storage = StorageClient(client: StorageTestClient(httpTransport: transport))
+
+        let fileUrl = try await storage.upload(data: Data("image".utf8), ofType: .imagePng)
+
+        XCTAssertEqual(fileUrl, "https://fal.media/retried.png")
+        XCTAssertEqual(putAttempts, 2)
+        XCTAssertEqual(transport.requests.map { $0.url?.absoluteString }, [
+            "https://rest.fal.ai/storage/upload/initiate?storage_type=fal-cdn-v3",
+            "https://storage.googleapis.com/upload",
+            "https://storage.googleapis.com/upload",
+        ])
+    }
+
+    func testUploadDoesNotRetryTransientInitiateResponses() async throws {
+        var initiateAttempts = 0
+        let transport = RecordingHTTPTransport { request in
+            initiateAttempts += 1
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 503,
+                httpVersion: nil,
+                headerFields: nil
+            )!
+            let data = #"{"detail":"temporarily unavailable"}"#.data(using: .utf8)!
+            return HTTPTransportResponse(data: data, response: response)
+        }
+        let storage: Storage = StorageClient(client: StorageTestClient(httpTransport: transport))
+
+        do {
+            _ = try await storage.upload(data: Data("image".utf8), ofType: .imagePng)
+            XCTFail("Expected transient initiate failure")
+        } catch FalError.httpError(let error) {
+            XCTAssertEqual(error.statusCode, 503)
+        }
+
+        XCTAssertEqual(initiateAttempts, 1)
+    }
+
     func testUploadOptionsRejectInvalidLifecycleDurationBeforeSendingRequest() async throws {
         let transport = RecordingHTTPTransport { request in
             XCTFail("Unexpected request to \(request.url?.absoluteString ?? "nil")")

@@ -142,16 +142,20 @@ Acceptance:
 
 Files:
 
-- Modify: `Sources/FalClient/Client+Request.swift` or new request executor file.
+- Added: `Sources/FalClient/RetryPolicy.swift`
+- Modified: `Sources/FalClient/Client+Request.swift`, `Sources/FalClient/Queue.swift`, `Sources/FalClient/Queue+Codable.swift`, `Sources/FalClient/Storage.swift`
 
 Cases:
 
-- Retry transient transport errors.
-- Retry selected ingress/status codes for idempotent status/result calls.
-- Do not retry `CancellationError`.
-- Do not retry fal user timeout responses with `X-Fal-Request-Timeout-Type: user`.
-- Preserve final response metadata in thrown errors.
-- Do not retry direct `/stream` requests; direct streaming is outside queue retry semantics.
+- [x] Retry transient transport errors for queue result/response.
+- [x] Retry selected ingress/status codes for queue status/result calls.
+- [x] Retry transient presigned storage PUT failures.
+- [x] Do not retry storage upload initiate because it creates upload state and has no idempotency key.
+- [x] Do not retry `CancellationError` or `URLError.cancelled`.
+- [x] Do not retry fal user timeout responses with `X-Fal-Request-Timeout-Type: user`.
+- [x] Preserve final response metadata in thrown errors.
+- [x] Cap retry attempts and use bounded cancellation-aware backoff, with bounded numeric `Retry-After` handling.
+- [x] Do not retry direct `/stream` requests; direct streaming is outside queue retry semantics.
 
 ### SSE and Direct Streaming
 

@@ -14,7 +14,8 @@ extension Client {
         input: Data?,
         queryParams: [String: Any]? = nil,
         options: RunOptions,
-        includeQueuePriority: Bool = true
+        includeQueuePriority: Bool = true,
+        retryPolicy: RetryPolicy = .none
     ) async throws -> Data {
         var request = try makeRequest(
             to: urlString,
@@ -26,9 +27,11 @@ extension Client {
         if input != nil, options.httpMethod != .get {
             request.httpBody = input
         }
-        let transportResponse = try await resolvedHTTPTransport.data(for: request)
-        try checkResponseStatus(for: transportResponse.response, withData: transportResponse.data)
-        return transportResponse.data
+        return try await retrying(policy: retryPolicy) {
+            let transportResponse = try await resolvedHTTPTransport.data(for: request)
+            try checkResponseStatus(for: transportResponse.response, withData: transportResponse.data)
+            return transportResponse.data
+        }
     }
 
     func sendServerSentEvents(
@@ -271,6 +274,7 @@ private extension TimeInterval {
 private extension HTTPURLResponse {
     var falDiagnosticHeaders: [String: String] {
         let allowedHeaders: Set<String> = [
+            "retry-after",
             "x-fal-request-id",
             "x-fal-error-type",
             "x-fal-request-timeout-type",

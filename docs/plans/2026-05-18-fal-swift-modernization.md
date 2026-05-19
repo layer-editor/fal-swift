@@ -126,9 +126,11 @@ External references checked:
 - [x] Replace duplicated subscribe polling with a shared queue poller.
   - Typed and untyped APIs now share deadline, cancellation, logging, callback, and response-fetch behavior through `QueuePolling.swift`.
 
-- [ ] Add client-side retry policy for transient transport/status/result failures.
-  - Start with queue status/result and storage upload.
-  - Avoid retrying Swift task cancellation and fal user timeout responses.
+- [x] Add client-side retry policy for transient transport/status/result failures.
+  - Implemented for queue status, queue result/response, and presigned storage PUT.
+  - Storage upload initiate remains single-attempt because it creates upload state and lacks an idempotency key.
+  - Avoid retrying Swift task cancellation, `URLError.cancelled`, and fal user timeout responses.
+  - Retry attempts are capped and use bounded cancellation-aware backoff, with bounded support for numeric `Retry-After`.
   - Match peer-client behavior only where it improves client-side network reliability; fal server-side queue retries are separate.
   - Do not add retries to direct `/stream`; Fal documents streaming as a direct SSE request outside queue retry semantics.
 
@@ -173,7 +175,7 @@ External references checked:
 High-leverage implementation work that remains after the completed queue, streaming, endpoint parsing, request-option, and first storage modernization slices:
 
 - Storage security/parity: evaluate direct `v3.fal.media` token flow, fallback repositories, multipart upload, and whether storage PUTs should use DNS resolution or a documented storage-host allowlist to mitigate public hostnames that resolve to private addresses.
-- Client reliability: add retry policy for transient queue status/result and storage failures without retrying cancellation, user timeouts, or direct streams; add remaining explicit payload subscribe timeout/cancellation coverage.
+- Client reliability: add remaining explicit payload subscribe timeout/cancellation coverage and decide whether any future retry knobs should be public configuration.
 - Realtime parity: update token/path behavior against current Fal clients and add fake WebSocket/session boundary tests.
 - Media ergonomics: replace unsafe synchronous `FalImageContent.data` with async throwing helpers before deprecating it.
 - Release readiness: README refresh, markdown guides, sample cleanup/legacy labeling, CI, changelog, contributing guide, and user-agent/package version cleanup.
@@ -201,6 +203,7 @@ High-leverage implementation work that remains after the completed queue, stream
 - 2026-05-18: Added reserved-namespace endpoint parsing for `workflows/...` and `comfy/...`, normalized endpoint path joining, and queue follow-up URL construction that uses namespace/owner/alias while preserving endpoint subpaths for submit/direct calls.
 - 2026-05-18: Modernized the storage initiate endpoint to `rest.fal.ai` with `fal-cdn-v3`, added `StorageUploadOptions` for custom file names and uploaded-file lifecycle headers, sanitized custom file names, and kept presigned PUT requests free of Fal auth and lifecycle headers.
 - 2026-05-18: Hardened storage URL privacy and redirect behavior by redacting invalid signed URL associated values, rejecting numeric IPv6 loopback/private aliases, blocking unsafe presigned PUT redirects in the built-in URLSession transport, and documenting the remaining DNS trust-policy question.
+- 2026-05-18: Added an internal bounded retry policy for transient queue status/result and presigned storage PUT failures, while keeping direct run, direct stream, storage initiate, cancellation, and fal user-timeout responses single-attempt.
 
 ## Non-Goals
 

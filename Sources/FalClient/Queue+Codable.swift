@@ -69,7 +69,8 @@ public extension Queue {
         return try await runOnQueue(
             AppId.parse(id: id).queueBasePath,
             input: nil as Payload?,
-            options: .route(queueRequestPath(for: requestId), withMethod: .get)
+            options: .route(queueRequestPath(for: requestId), withMethod: .get),
+            retryPolicy: .transientRequest
         )
     }
 }
