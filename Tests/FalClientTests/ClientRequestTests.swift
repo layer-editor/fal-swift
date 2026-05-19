@@ -297,6 +297,91 @@ final class ClientRequestTests: XCTestCase {
         XCTAssertEqual(queryItems["logs"], "0")
     }
 
+    func testNamespacedQueueStatusUsesNamespaceOwnerAndAliasAsQueueBase() async throws {
+        requestHandler = { request in
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: nil
+            )!
+            let data = #"{"status":"IN_QUEUE","queue_position":1,"response_url":"https://queue.fal.run/workflows/chris/image-pipeline/requests/request-id"}"#.data(using: .utf8)!
+            return HTTPTransportResponse(data: data, response: response)
+        }
+
+        let client = TestRequestClient(config: ClientConfig(), httpTransport: transport)
+        let queue = QueueClient(client: client)
+
+        _ = try await queue.status("workflows/chris/image-pipeline/preview", of: "request-id")
+
+        let request = try XCTUnwrap(transport.requests.first)
+        XCTAssertEqual(request.url?.path, "/workflows/chris/image-pipeline/requests/request-id/status")
+    }
+
+    func testNamespacedQueueResponseAndCancelUseNamespaceOwnerAndAliasAsQueueBase() async throws {
+        requestHandler = { request in
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: nil
+            )!
+            return HTTPTransportResponse(data: #"{"value":"ok"}"#.data(using: .utf8)!, response: response)
+        }
+
+        let client = TestRequestClient(config: ClientConfig(), httpTransport: transport)
+        let queue = QueueClient(client: client)
+
+        _ = try await queue.response("comfy/chris/portrait-workflow/preview", of: "request-id")
+        try await queue.cancel("comfy/chris/portrait-workflow/preview", of: "request-id")
+
+        XCTAssertEqual(transport.requests.map { $0.url?.path }, [
+            "/comfy/chris/portrait-workflow/requests/request-id",
+            "/comfy/chris/portrait-workflow/requests/request-id/cancel",
+        ])
+    }
+
+    func testTypedNamespacedQueueResponseUsesNamespaceOwnerAndAliasAsQueueBase() async throws {
+        requestHandler = { request in
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: nil
+            )!
+            return HTTPTransportResponse(data: #"{"value":"ok"}"#.data(using: .utf8)!, response: response)
+        }
+
+        let client = TestRequestClient(config: ClientConfig(), httpTransport: transport)
+        let queue = QueueClient(client: client)
+
+        let _: RequestOutput = try await queue.response("workflows/chris/image-pipeline/preview", of: "request-id")
+
+        let request = try XCTUnwrap(transport.requests.first)
+        XCTAssertEqual(request.url?.path, "/workflows/chris/image-pipeline/requests/request-id")
+    }
+
+    func testNamespacedQueueSubmitPreservesEndpointSubpath() async throws {
+        requestHandler = { request in
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: nil
+            )!
+            let data = #"{"request_id":"request-id"}"#.data(using: .utf8)!
+            return HTTPTransportResponse(data: data, response: response)
+        }
+
+        let client = TestRequestClient(config: ClientConfig(), httpTransport: transport)
+        let queue = QueueClient(client: client)
+
+        _ = try await queue.submit("workflows/chris/image-pipeline/preview", input: ["prompt": "cat"])
+
+        let request = try XCTUnwrap(transport.requests.first)
+        XCTAssertEqual(request.url?.path, "/workflows/chris/image-pipeline/preview")
+    }
+
     func testQueueStatusEncodesRequestIdAsSinglePathSegment() async throws {
         requestHandler = { request in
             let response = HTTPURLResponse(

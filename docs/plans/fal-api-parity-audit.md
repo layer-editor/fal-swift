@@ -20,7 +20,7 @@ The Swift client has a useful core: direct `run`, queue-backed `subscribe`, manu
 | `stream` | Present | Official method for `/stream` SSE endpoints | P1 |
 | realtime | Present | Needs custom path/token-provider parity and concurrency hardening | P1 |
 | platform headers | Mostly missing | `start_timeout`, `hint`, `priority`, custom headers, storage/retry/fallback controls | P1 |
-| namespaced endpoints | Fragile | Peer clients preserve namespace/path pieces | P1 |
+| namespaced endpoints | Present | Peer clients preserve namespace/path pieces | P1 |
 | storage uploads | Basic | Peer clients support newer storage/CDN behavior and lifecycle options | P1/P2 |
 
 ## Queue API Gaps
@@ -81,13 +81,15 @@ Implementation note: this should reuse the new internal request builder and tran
 
 ## Endpoint Parsing
 
-`AppId.parse` currently stores `ownerId`, `appAlias`, and optional path, but status/result calls rebuild queue URLs using only `ownerId/appAlias`. Namespaces such as `workflows/...` or `comfy/...` can lose pieces.
+`AppId.parse` now distinguishes reserved namespace endpoint IDs from ordinary model IDs.
 
-Planned model:
+Implemented model:
 
-- `EndpointId` with `namespace: String?`, `owner: String`, `alias: String`, `path: String?`.
-- A `queueBasePath` that preserves namespace, owner, and alias, but excludes endpoint subpaths when building `/requests/...` URLs if fal expects only endpoint ID.
-- Characterization tests from peer client examples before changing behavior.
+- `AppId` includes `namespace: String?`, `ownerId`, `appAlias`, `path`, `endpointPath`, and `queueBasePath`.
+- Reserved namespaces are `workflows` and `comfy`.
+- Direct calls and queue submit preserve `endpointPath`, including optional endpoint subpaths.
+- Queue follow-up calls use `queueBasePath`, which preserves namespace/owner/alias for reserved namespaces and preserves the full model ID for ordinary model IDs such as `fal-ai/flux/schnell`.
+- Characterization tests cover path joining, reserved namespace parsing, submit preservation, and status/stream/result/cancel queue-base construction.
 
 ## Storage Parity
 

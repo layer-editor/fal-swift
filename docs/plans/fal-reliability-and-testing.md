@@ -24,6 +24,7 @@ Recently added request-option coverage:
 - Typed `subscribe(onEnqueue:)` callback metadata and custom queue fallback behavior.
 - Queue status SSE request construction, path escaping, `logs=1`, default query omission, decoding, heartbeat-tolerant parsing, and HTTP error payload preservation.
 - Direct model stream request construction, default and custom stream paths, client HTTP timeout, Payload and typed event decoding, HTTP error payload preservation, and typed binary input rejection before request construction.
+- Reserved namespace endpoint parsing for `workflows/...` and `comfy/...`, including submit path preservation and namespace/owner/alias queue-base construction for status, stream-status, response, and cancel.
 
 Remaining gaps:
 

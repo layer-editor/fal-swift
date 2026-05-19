@@ -60,6 +60,20 @@ final class QueueStreamStatusTests: XCTestCase {
         XCTAssertNil(components.query)
     }
 
+    func testQueueStreamStatusUsesNamespacedQueueBase() async throws {
+        transport = RecordingHTTPTransport(serverSentEventData: [
+            #"{"status":"COMPLETED","request_id":"request-id","response_url":"https://queue.fal.run/workflows/chris/image-pipeline/requests/request-id","logs":[]}"#,
+        ])
+        let client = TestStreamClient(httpTransport: transport)
+        let queue = QueueClient(client: client)
+
+        let stream = try await queue.streamStatus("workflows/chris/image-pipeline/preview", of: "request-id")
+        for try await _ in stream {}
+
+        let request = try XCTUnwrap(transport.requests.first)
+        XCTAssertEqual(request.url?.path, "/workflows/chris/image-pipeline/requests/request-id/status/stream")
+    }
+
     func testQueueStreamStatusPreservesHTTPErrorPayload() async throws {
         let errorData = Data(#"{"detail":"stream unavailable","error_type":"service_unavailable"}"#.utf8)
         transport = RecordingHTTPTransport(

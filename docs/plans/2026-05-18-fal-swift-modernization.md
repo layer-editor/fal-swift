@@ -102,8 +102,11 @@ External references checked:
   - Limit the public option surface to direct-stream controls: path and client HTTP timeout. Do not apply queue-only controls such as priority, start timeout, runner hint, or queue retry flags.
   - Document that queue retry semantics do not apply to direct streaming.
 
-- [ ] Fix endpoint parsing for namespaced endpoints.
+- [x] Fix endpoint parsing for namespaced endpoints.
   - Support IDs such as `workflows/...` and `comfy/...` without dropping namespace or path pieces during status/result URL construction.
+  - Reserved namespace IDs now parse as `namespace/owner/alias[/path]`.
+  - Direct requests and queue submit preserve the full endpoint path.
+  - Queue follow-up operations (`status`, `streamStatus`, `response`, `cancel`) use the stable namespace/owner/alias queue base for `workflows` and `comfy`.
 
 - [ ] Modernize storage uploads after request options land.
   - Move away from `rest.alpha.fal.ai` where appropriate.
@@ -181,6 +184,7 @@ External references checked:
 - 2026-05-18: Added `Queue.streamStatus(...)` for queue status SSE updates, including request-id path encoding, `logs=1` support, and shared SSE parsing through the internal HTTP transport seam.
 - 2026-05-18: Updated streaming architecture guidance after queue status streaming review: pull-driven streams, bounded SSE error bodies, heartbeat/comment tolerance, shared generic event decoding before direct `/stream`, and explicit ownership semantics for queue observation versus request-owning subscribe flows.
 - 2026-05-18: Added direct `FalClient.stream(...)` support for model `/stream` SSE endpoints with narrow `StreamOptions`, Payload and typed event decoding, custom stream paths, client HTTP timeout, and fake-transport coverage for error payloads and typed binary input rejection.
+- 2026-05-18: Added reserved-namespace endpoint parsing for `workflows/...` and `comfy/...`, normalized endpoint path joining, and queue follow-up URL construction that uses namespace/owner/alias while preserving endpoint subpaths for submit/direct calls.
 
 ## Non-Goals
 

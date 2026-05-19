@@ -67,7 +67,7 @@ public extension Queue {
 
     func response<Output: Decodable>(_ id: String, of requestId: String) async throws -> Output {
         return try await runOnQueue(
-            ensureAppIdFormat(id),
+            AppId.parse(id: id).queueBasePath,
             input: nil as Payload?,
             options: .route(queueRequestPath(for: requestId), withMethod: .get)
         )

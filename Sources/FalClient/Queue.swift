@@ -180,7 +180,7 @@ public struct QueueClient: QueueStatusDetailProviding, QueueCancellationProvidin
 
     public func statusDetail(_ id: String, of requestId: String, includeLogs: Bool) async throws -> QueueStatusDetail {
         let result: QueueStatusDetail = try await runOnQueue(
-            ensureAppIdFormat(id),
+            AppId.parse(id: id).queueBasePath,
             input: nil,
             queryParams: [
                 "logs": includeLogs ? 1 : 0,
@@ -192,7 +192,7 @@ public struct QueueClient: QueueStatusDetailProviding, QueueCancellationProvidin
 
     public func streamStatus(_ id: String, of requestId: String, includeLogs: Bool) async throws -> AsyncThrowingStream<QueueStatusDetail, Error> {
         let url = buildUrl(
-            fromId: try ensureAppIdFormat(id),
+            fromId: try AppId.parse(id: id).queueBasePath,
             path: queueRequestPath(for: requestId, suffix: "/status/stream"),
             subdomain: "queue"
         )
@@ -206,7 +206,7 @@ public struct QueueClient: QueueStatusDetailProviding, QueueCancellationProvidin
 
     public func cancel(_ id: String, of requestId: String) async throws {
         let _: Payload = try await runOnQueue(
-            ensureAppIdFormat(id),
+            AppId.parse(id: id).queueBasePath,
             input: nil as Payload?,
             options: .route(queueRequestPath(for: requestId, suffix: "/cancel"), withMethod: .put)
         )
@@ -214,7 +214,7 @@ public struct QueueClient: QueueStatusDetailProviding, QueueCancellationProvidin
 
     public func response(_ id: String, of requestId: String) async throws -> Payload {
         return try await runOnQueue(
-            ensureAppIdFormat(id),
+            AppId.parse(id: id).queueBasePath,
             input: nil as Payload?,
             options: .route(queueRequestPath(for: requestId), withMethod: .get)
         )
