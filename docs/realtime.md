@@ -44,7 +44,7 @@ let connection = try fal.realtime.connect(
 
 ## Token Provider Decision
 
-The package does not expose a public custom realtime token-provider hook right now. Token refresh uses the current Fal REST endpoint internally, and app credential protection should happen through proxy or short-lived bearer-token setup. A public provider would add expiration, refresh, and concurrency API surface before we have a concrete OpenStudio need.
+The package does not expose a public custom realtime token-provider hook right now. Token refresh uses the current Fal REST endpoint internally, and app credential protection should happen through proxy or short-lived bearer-token setup. A public provider would add expiration, refresh, and concurrency API surface before there is a concrete product need.
 
 ## Samples
 

@@ -16,5 +16,5 @@ Run a local proxy that owns `FAL_KEY`, or change `fal.swift` for local experimen
 
 ## Notes
 
-- The sample is intentionally minimal and is not OpenStudio architecture.
+- The sample is intentionally minimal and is not production app architecture.
 - If model IDs or schemas change, update the prompt/request shape before treating the sample as current.

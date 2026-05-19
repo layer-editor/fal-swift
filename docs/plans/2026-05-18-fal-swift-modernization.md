@@ -1,7 +1,5 @@
 # Fal Swift Modernization Implementation Plan
 
-> **For Claude/Codex:** REQUIRED SUB-SKILL: Use `superpowers:executing-plans` when executing any approved task from this plan. Keep changes small, write targeted tests first, and do not broaden scope without updating this document.
-
 **Goal:** Bring `FalClient` into practical parity with current fal model API clients while improving safety, testability, and Apple-platform ergonomics without refactoring for its own sake.
 
 **Architecture:** Keep the public facade small: `FalClient` plus `queue`, `storage`, `realtime`, and a new streaming surface. Add internal seams only where they pay for themselves: request construction, HTTP transport, queue polling/status streaming, generic SSE event decoding, and error metadata. Preserve current call sites first; introduce additive options and deprecations before removals.
@@ -186,7 +184,7 @@ External references checked:
 
 High-leverage implementation work that remains after the completed queue, streaming, endpoint parsing, request-option, storage modernization, and release-readiness slices:
 
-- Client reliability: public retry knobs are intentionally deferred until OpenStudio has a concrete caller need.
+- Client reliability: public retry knobs are intentionally deferred until a concrete caller need appears.
 - Realtime follow-up: public custom token providers are intentionally deferred; current guidance favors proxy or short-lived bearer-token setup.
 - Release readiness: sample app CI builds remain deferred because simulator/signing availability is brittle. The library test/build CI path is enabled.
 

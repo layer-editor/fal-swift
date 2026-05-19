@@ -1,6 +1,6 @@
 # Samples
 
-Sample apps are lightweight references for package APIs. They are not OpenStudio architecture and should not be copied into production without app-specific auth, state, and error handling.
+Sample apps are lightweight references for package APIs. They are not production app architecture and should not be copied into production without app-specific auth, state, and error handling.
 
 All samples default to a local proxy:
 

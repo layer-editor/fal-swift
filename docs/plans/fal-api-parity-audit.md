@@ -133,7 +133,7 @@ Implemented:
 
 Decision:
 
-- Do not expose a public custom realtime token provider yet. The current implementation keeps token refresh internal and credential-based, and app credential protection should happen through proxy or short-lived bearer-token setup until OpenStudio has a concrete need.
+- Do not expose a public custom realtime token provider yet. The current implementation keeps token refresh internal and credential-based, and app credential protection should happen through proxy or short-lived bearer-token setup until a concrete product need appears.
 
 ## References
 

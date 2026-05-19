@@ -1,6 +1,6 @@
 # Contributing
 
-This fork is maintained for our internal Apple-platform use first. Keep changes small, tested, and aligned with the existing package shape.
+This fork is maintained for practical Apple-platform app use. Keep changes small, tested, and aligned with the existing package shape.
 
 ## Setup
 

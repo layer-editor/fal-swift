@@ -1,6 +1,6 @@
 # Fal Swift
 
-A pragmatic Swift client for Fal model APIs. This fork is maintained for our Apple-platform app work and focuses on the surfaces we actually use: direct requests, queue-backed inference, streaming, realtime connections, storage uploads, typed `Codable` calls, and testable networking.
+A pragmatic Swift client for Fal model APIs. This fork focuses on production Apple-platform app needs: direct requests, queue-backed inference, streaming, realtime connections, storage uploads, typed `Codable` calls, and testable networking.
 
 ## Installation
 
@@ -112,7 +112,7 @@ See [Errors](docs/errors.md).
 
 ## Samples
 
-Sample apps live in `Sources/Samples`. Each sample has a README with its status and setup notes. Treat them as lightweight references, not canonical OpenStudio architecture.
+Sample apps live in `Sources/Samples`. Each sample has a README with its status and setup notes. Treat them as lightweight references, not production app architecture.
 
 ## Development
 
