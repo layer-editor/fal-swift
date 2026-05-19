@@ -4,7 +4,7 @@ This is the living parity matrix for `FalClient` against current fal model API d
 
 ## Summary
 
-The Swift client now covers the core model API workflows: direct `run`, queue-backed `subscribe`, manual queue `submit/status/response/cancel`, queue status streaming, direct model `/stream`, realtime WebSocket support, modern storage uploads, dynamic `Payload`, and `Codable` overloads. The remaining gaps are now mostly release polish and future product decisions, not backend API parity.
+The Swift client now covers the core model API workflows: direct `run`, queue-backed `subscribe`, manual queue `submit/status/response/cancel`, queue status streaming, direct model `/stream`, model catalog discovery, realtime WebSocket support, modern storage uploads, dynamic `Payload`, and `Codable` overloads. The remaining gaps are now mostly release polish and future product decisions, not backend API parity.
 
 ## Feature Matrix
 
@@ -18,6 +18,7 @@ The Swift client now covers the core model API workflows: direct `run`, queue-ba
 | `queue.cancel` | Present | Documented `PUT /requests/{request_id}/cancel` endpoint | Done |
 | `queue.streamStatus` | Present | Documented SSE endpoint implemented as `AsyncThrowingStream<QueueStatusDetail, Error>` | Done |
 | `stream` | Present | Official method for `/stream` SSE endpoints | Done |
+| model discovery | Present | Fal platform model search API with optional OpenAPI expansion, endpoint lookup, schema extraction, and capability inference for dynamic clients | Done |
 | realtime | Present, concurrency-hardened, current token endpoint, custom path overloads, fake socket lifecycle tests, and docs/sample guidance | Custom token providers intentionally deferred until a product need appears | Done |
 | platform headers | Present | Server-side platform headers are modeled; client-side transient retry is implemented for queue status/result and storage PUT | Done |
 | namespaced endpoints | Present | Peer clients preserve namespace/path pieces | Done |
@@ -78,6 +79,21 @@ Implemented surface:
 - Document that direct streaming does not get queue retries.
 
 Implementation note: this should reuse the new internal request builder and transport seams. Avoid building a second ad hoc HTTP stack. Keep stream decoding pull-driven and cover SSE comments/heartbeats, blank separators, multiline `data:` payloads, EOF after a final event, bounded error bodies, and HTTP error payload preservation.
+
+## Model Discovery
+
+Implemented:
+
+- `fal.models.list(...)` and `fal.models.search(...)` call Fal's platform model search API at `https://api.fal.ai/v1/models`.
+- `fal.models.find(_ endpointId:)` and `fal.models.find(_ endpointIds:)` use repeated `endpoint_id` query parameters for exact model lookup.
+- `FalModelExpansion.openAPI` maps to `expand=openapi-3.0`, preserving the expanded document as `Payload`.
+- `FalModel.queueSchema` extracts queue input/output object schemas from OpenAPI into playground-friendly `FalModelField` values.
+- `FalModel.inferredCapabilities` combines metadata category and schema fields to infer broad Apple-client routing shapes such as `.textToImage`, `.textToImages`, `.imageToImage`, and `.imageToImages`.
+- Catalog requests reuse the existing request builder, so auth, proxy routing, HTTP errors, and test transports behave consistently with model requests.
+
+Decision:
+
+- Do not generate static Swift types from arbitrary OpenAPI at runtime. Dynamic playground and hotswap flows should use `Payload`; production paths can add curated `Codable` wrappers for the subset of models an app treats as first-class.
 
 ## Endpoint Parsing
 

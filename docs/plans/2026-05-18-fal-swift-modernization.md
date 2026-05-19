@@ -2,9 +2,11 @@
 
 **Goal:** Bring `FalClient` into practical parity with current fal model API clients while improving safety, testability, and Apple-platform ergonomics without refactoring for its own sake.
 
-**Architecture:** Keep the public facade small: `FalClient` plus `queue`, `storage`, `realtime`, and a new streaming surface. Add internal seams only where they pay for themselves: request construction, HTTP transport, queue polling/status streaming, generic SSE event decoding, and error metadata. Preserve current call sites first; introduce additive options and deprecations before removals.
+**Architecture:** Keep the public facade small: `FalClient` plus `queue`, `storage`, `realtime`, `models`, and streaming surfaces. Add internal seams only where they pay for themselves: request construction, HTTP transport, queue polling/status streaming, generic SSE event decoding, model catalog/schema extraction, and error metadata. Preserve current call sites first; introduce additive options and deprecations before removals.
 
 **Streaming Architecture Rule:** SSE consumers should be pull-driven by the caller's `AsyncSequence` iteration, not eager producer tasks with unbounded buffering. Treat SSE as a protocol boundary: support comments/heartbeats, extra blank separators, multiline `data:` payloads, EOF after a final event, bounded non-2xx error bodies, and Fal HTTP error payload preservation.
+
+**Time API Rule:** Prefer Swift `Duration` for new time-facing APIs when the deployment target and call-site readability allow it. Keep existing `TimeInterval` and `DispatchTimeInterval` APIs source-compatible unless we add a deliberate migration path with additive `Duration` overloads.
 
 **Tech Stack:** Swift Package Manager, async/await, URLSession, Codable, XCTest or Swift Testing, mocked URLProtocol or internal HTTP transport for network tests.
 
@@ -18,6 +20,7 @@
 - [x] Implemented queue/request parity gaps.
 - [x] Implemented shared SSE transport and queue status streaming.
 - [x] Implemented direct model `/stream` support.
+- [x] Implemented model catalog search, endpoint lookup, schema extraction, and capability inference for dynamic Apple-client playgrounds.
 - [x] Hardened storage uploads and typed binary handling.
 - [x] Added storage upload options for file names and uploaded-file lifecycle.
 - [x] Updated README, sample docs, CI, and release metadata.
@@ -101,6 +104,15 @@ External references checked:
   - Limit the public option surface to direct-stream controls: path and client HTTP timeout. Do not apply queue-only controls such as priority, start timeout, runner hint, or queue retry flags.
   - Document that queue retry semantics do not apply to direct streaming.
 
+- [x] Add model discovery for app-side playgrounds and hotswapping.
+  - Added `fal.models` with catalog `list`, `search`, single endpoint lookup, and multi-endpoint lookup.
+  - Added support for repeated `expand` and `endpoint_id` query parameters so callers can request OpenAPI schemas and exact model IDs without ad hoc URL construction.
+  - Added `FalModel`, `FalModelMetadata`, `FalModelPage`, `FalModelStatus`, and `FalModelExpansion`.
+  - Preserve the expanded OpenAPI document as `Payload` for callers that need raw schema access.
+  - Extract queue input/output object schemas into playground-friendly fields with names, titles, descriptions, required flags, enum values, defaults, examples, and numeric bounds.
+  - Infer broad Apple-client capabilities from category plus schema: text/image/video/audio/file/JSON inputs and outputs, common tasks such as text-to-image, text-to-images, image-to-image, and image-to-images, and queue support.
+  - Keep generated static Swift model types out of scope; dynamic playgrounds should use `Payload`, while production flows can keep curated `Codable` wrappers.
+
 - [x] Fix endpoint parsing for namespaced endpoints.
   - Support IDs such as `workflows/...` and `comfy/...` without dropping namespace or path pieces during status/result URL construction.
   - Reserved namespace IDs now parse as `namespace/owner/alias[/path]`.
@@ -167,6 +179,7 @@ External references checked:
   - Streaming.
   - Realtime.
   - Storage uploads. `docs/storage.md` now documents the modern default CDN chain, multipart behavior, legacy presigned option, lifecycle settings, and fallback tradeoff.
+  - Model discovery. `docs/models.md` now documents catalog search, endpoint lookup, OpenAPI schema expansion, capability inference, and dynamic `Payload` calls.
   - Error handling.
 
 - [x] Update sample apps or mark them as legacy.
@@ -182,10 +195,12 @@ External references checked:
 
 ## Current Remaining Work
 
-High-leverage implementation work that remains after the completed queue, streaming, endpoint parsing, request-option, storage modernization, and release-readiness slices:
+High-leverage implementation work that remains after the completed queue, streaming, model discovery, endpoint parsing, request-option, storage modernization, and release-readiness slices:
 
 - Client reliability: public retry knobs are intentionally deferred until a concrete caller need appears.
 - Realtime follow-up: public custom token providers are intentionally deferred; current guidance favors proxy or short-lived bearer-token setup.
+- Model discovery follow-up: app-specific model override registries and typed model wrappers should live in consuming apps or separate curated layers unless a repeated cross-app need emerges.
+- API ergonomics follow-up: add `Duration` overloads for existing timeout/lifecycle options when worth the compatibility surface; prefer `Duration` for new time-facing APIs by default.
 - Release readiness: sample app CI builds remain deferred because simulator/signing availability is brittle. The library test/build CI path is enabled.
 
 ## Drill-Down Docs
@@ -219,10 +234,11 @@ High-leverage implementation work that remains after the completed queue, stream
 - 2026-05-18: Added explicit direct `fal.media` storage upload support with bearer-secret auth, lifecycle/file-name headers, safe returned URL validation, and fallback sequencing from pre-body direct CDN v3 failures.
 - 2026-05-18: Promoted storage defaults to the modern Fal CDN chain: direct CDN v3 -> direct `fal.media` -> REST presigned, with `.presignedFalCDNV3` kept for explicit legacy REST-presigned uploads and proxy/credential-aware skipping of direct `fal.media`.
 - 2026-05-18: Completed the release-readiness pass: refreshed README and markdown guides, labeled samples, modernized the maintained sample edges, aligned Swift tools/CI, removed Quick/Nimble, added changelog/contributing docs, and documented the retry/token-provider deferrals.
+- 2026-05-19: Added `fal.models` model discovery with catalog search, endpoint lookup, OpenAPI expansion preservation, queue schema extraction, model capability inference, model discovery docs, and tests for repeated query parameters plus playground field extraction.
 
 ## Non-Goals
 
 - Do not rewrite the package into a large layered architecture.
 - Do not break existing `FalClient.withCredentials`, `withProxy`, `run`, `subscribe`, `Payload`, or realtime call sites without a deprecation path.
 - Do not add platform APIs for billing, account, compute, or serverless management unless a concrete product use case appears.
-- Do not implement full generated model schemas in this package; typed `Codable` support is the right level for now.
+- Do not implement full generated model schemas in this package; dynamic `Payload` playgrounds plus curated typed `Codable` wrappers are the right level for now.

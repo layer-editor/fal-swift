@@ -1,6 +1,6 @@
 # Fal Swift
 
-A pragmatic Swift client for Fal model APIs. This fork focuses on production Apple-platform app needs: direct requests, queue-backed inference, streaming, realtime connections, storage uploads, typed `Codable` calls, and testable networking.
+A pragmatic Swift client for Fal model APIs. This fork focuses on production Apple-platform app needs: direct requests, queue-backed inference, model discovery, streaming, realtime connections, storage uploads, typed `Codable` calls, and testable networking.
 
 ## Installation
 
@@ -53,6 +53,27 @@ if case let .string(url) = result["images"][0]["url"] {
 ```
 
 For richer queue metadata, use `queue.submitDetailed`, `queue.statusDetail`, `queue.response`, `queue.cancel`, or `queue.streamStatus`. See [Queue](docs/queue.md).
+
+## Model Discovery
+
+Use `fal.models` to search Fal's model catalog, fetch optional OpenAPI schemas, infer broad input/output capabilities, and build dynamic playgrounds with `Payload`:
+
+```swift
+let page = try await fal.models.search(
+    "flux",
+    category: "text-to-image",
+    status: .active,
+    limit: 25,
+    expand: [.openAPI]
+)
+
+for model in page.models {
+    print(model.endpointId)
+    print(model.inferredCapabilities.task as Any)
+}
+```
+
+See [Model Discovery](docs/models.md).
 
 ## Typed Calls
 

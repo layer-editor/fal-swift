@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Modernized queue APIs with detailed submit/status metadata, cancellation, queue status streaming, and detail-aware subscribe helpers.
+- Added Fal model discovery APIs with catalog search, endpoint lookup, optional OpenAPI expansion, queue schema extraction, and broad capability inference for dynamic Apple-client playgrounds.
 - Added direct model SSE streaming with `Payload` and typed `Codable` event decoding.
 - Hardened endpoint parsing for namespaced IDs such as `workflows/...` and `comfy/...`.
 - Added public inspectable `FalError` and `FalHTTPError` metadata.
