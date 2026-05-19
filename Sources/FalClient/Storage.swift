@@ -34,6 +34,26 @@ public enum FileType {
     }
 }
 
+/// Upload backends supported by the storage client.
+public struct StorageUploadRepository: Equatable, Sendable {
+    enum Kind: Equatable, Sendable {
+        case falCDNV3PresignedURL
+        case directFalCDNV3
+    }
+
+    let kind: Kind
+
+    init(kind: Kind) {
+        self.kind = kind
+    }
+
+    /// The existing REST initiate flow that returns a presigned upload URL for Fal CDN v3 storage.
+    public static let falCDNV3PresignedURL = StorageUploadRepository(kind: .falCDNV3PresignedURL)
+
+    /// Direct Fal CDN v3 upload using a short-lived CDN token from fal's REST API.
+    public static let directFalCDNV3 = StorageUploadRepository(kind: .directFalCDNV3)
+}
+
 /// Options that customize a storage upload.
 public struct StorageUploadOptions: Equatable, Sendable {
     /// File name sent to fal as upload metadata.
@@ -45,16 +65,28 @@ public struct StorageUploadOptions: Equatable, Sendable {
     /// CDN lifecycle preference for the uploaded file.
     public let objectLifecyclePreference: FalObjectLifecyclePreference?
 
+    /// Primary upload backend.
+    public let repository: StorageUploadRepository
+
+    /// Upload backends to try if the primary backend fails with a transient error.
+    public let fallbackRepositories: [StorageUploadRepository]
+
     /// Creates storage upload options.
     /// - Parameters:
     ///   - fileName: File name sent to fal as upload metadata.
     ///   - objectLifecyclePreference: CDN lifecycle preference for the uploaded file.
+    ///   - repository: Primary upload backend.
+    ///   - fallbackRepositories: Upload backends to try if the primary backend fails with a transient error.
     public init(
         fileName: String? = nil,
-        objectLifecyclePreference: FalObjectLifecyclePreference? = nil
+        objectLifecyclePreference: FalObjectLifecyclePreference? = nil,
+        repository: StorageUploadRepository = .falCDNV3PresignedURL,
+        fallbackRepositories: [StorageUploadRepository] = []
     ) {
         self.fileName = fileName
         self.objectLifecyclePreference = objectLifecyclePreference
+        self.repository = repository
+        self.fallbackRepositories = fallbackRepositories
     }
 }
 
@@ -130,6 +162,26 @@ struct UploadUrl: Codable {
     }
 }
 
+struct StorageCDNToken: Codable {
+    let token: String
+    let tokenType: String
+    let baseURL: String
+
+    enum CodingKeys: String, CodingKey {
+        case token
+        case tokenType = "token_type"
+        case baseURL = "base_url"
+    }
+}
+
+struct DirectStorageUploadResponse: Codable {
+    let accessURL: String
+
+    enum CodingKeys: String, CodingKey {
+        case accessURL = "access_url"
+    }
+}
+
 struct StorageClient: Storage {
     let client: Client
 
@@ -165,11 +217,45 @@ struct StorageClient: Storage {
     }
 
     func upload(data: Data, ofType type: FileType, options: StorageUploadOptions) async throws -> String {
+        let repositories = options.repositoryChain
+        var lastError: Error?
+        for repository in repositories {
+            do {
+                return try await upload(data: data, ofType: type, options: options, repository: repository)
+            } catch let terminalError as TerminalStorageUploadError {
+                throw terminalError.underlying
+            } catch {
+                guard shouldFallbackAfterStorageUploadError(error),
+                      repository != repositories.last
+                else {
+                    throw error
+                }
+                lastError = error
+            }
+        }
+        throw lastError ?? FalError.invalidResultFormat
+    }
+
+    private func upload(
+        data: Data,
+        ofType type: FileType,
+        options: StorageUploadOptions,
+        repository: StorageUploadRepository
+    ) async throws -> String {
+        switch repository.kind {
+        case .falCDNV3PresignedURL:
+            return try await uploadUsingPresignedURL(data: data, ofType: type, options: options)
+        case .directFalCDNV3:
+            return try await uploadDirectlyToFalCDNV3(data: data, ofType: type, options: options)
+        }
+    }
+
+    private func uploadUsingPresignedURL(data: Data, ofType type: FileType, options: StorageUploadOptions) async throws -> String {
         let uploadUrl = try await initiateUpload(data: data, ofType: type, options: options)
-        guard let url = URL.safeExternalHTTPSURL(from: uploadUrl.uploadUrl) else {
+        guard let url = URL.safeFalStorageUploadURL(from: uploadUrl.uploadUrl) else {
             throw FalError.invalidUrl(url: uploadUrl.uploadUrl.redactedURLForDescription)
         }
-        guard URL.safeExternalHTTPSURL(from: uploadUrl.fileUrl) != nil else {
+        guard URL.safeFalStorageFileURL(from: uploadUrl.fileUrl) != nil else {
             throw FalError.invalidUrl(url: uploadUrl.fileUrl.redactedURLForDescription)
         }
 
@@ -185,16 +271,71 @@ struct StorageClient: Storage {
         try await retrying(policy: .transientRequest) {
             let transportResponse = try await client.resolvedHTTPTransport.data(
                 for: request,
-                validatingRedirectsWith: { URL.safeExternalHTTPSURL($0) }
+                validatingRedirectsWith: { URL.safeFalStorageUploadURL($0) }
             )
             try client.checkResponseStatus(for: transportResponse.response, withData: transportResponse.data)
         }
 
         return uploadUrl.fileUrl
     }
+
+    private func uploadDirectlyToFalCDNV3(data: Data, ofType type: FileType, options: StorageUploadOptions) async throws -> String {
+        let token = try await fetchCDNToken()
+        let fileName = options.normalizedFileName(for: type)
+        let uploadUrlString = "\(token.baseURL.trimmingSuffix("/"))/files/upload"
+        guard let url = URL.safeFalDirectCDNV3UploadURL(from: uploadUrlString) else {
+            throw FalError.invalidUrl(url: uploadUrlString.redactedURLForDescription)
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.httpBody = data
+        request.setValue(type.mimeType, forHTTPHeaderField: "Content-Type")
+        request.setValue(String(data.count), forHTTPHeaderField: "Content-Length")
+        request.setValue("\(token.tokenType) \(token.token)", forHTTPHeaderField: "Authorization")
+        request.setValue(fileName, forHTTPHeaderField: "X-Fal-File-Name")
+        if let objectLifecyclePreference = options.objectLifecyclePreference {
+            let lifecycleHeader = try objectLifecyclePreference.headerValue()
+            request.setValue(lifecycleHeader, forHTTPHeaderField: "X-Fal-Object-Lifecycle")
+            request.setValue(lifecycleHeader, forHTTPHeaderField: "X-Fal-Object-Lifecycle-Preference")
+        }
+
+        do {
+            let response = try await client.resolvedHTTPTransport.data(
+                for: request,
+                validatingRedirectsWith: { URL.safeFalDirectCDNV3UploadURL($0) }
+            )
+            try client.checkResponseStatus(for: response.response, withData: response.data)
+            let uploadResponse = try JSONDecoder().decode(DirectStorageUploadResponse.self, from: response.data)
+            guard URL.safeFalStorageFileURL(from: uploadResponse.accessURL) != nil else {
+                throw FalError.invalidUrl(url: uploadResponse.accessURL.redactedURLForDescription)
+            }
+            return uploadResponse.accessURL
+        } catch {
+            throw TerminalStorageUploadError(underlying: error)
+        }
+    }
+
+    private func fetchCDNToken() async throws -> StorageCDNToken {
+        let response = try await client.sendRequest(
+            to: "https://rest.fal.ai/storage/auth/token?storage_type=fal-cdn-v3",
+            input: Data("{}".utf8),
+            options: .withMethod(.post),
+            retryPolicy: .transientRequest
+        )
+        return try JSONDecoder().decode(StorageCDNToken.self, from: response)
+    }
 }
 
 private extension StorageUploadOptions {
+    var repositoryChain: [StorageUploadRepository] {
+        var repositories: [StorageUploadRepository] = []
+        for repository in [repository] + fallbackRepositories where !repositories.contains(repository) {
+            repositories.append(repository)
+        }
+        return repositories
+    }
+
     func normalizedFileName(for type: FileType) -> String {
         guard let fileName else {
             return "\(UUID().uuidString).\(type.fileExtension)"
@@ -248,6 +389,60 @@ extension URL {
         }
         return true
     }
+
+    static func safeFalStorageUploadURL(from string: String) -> URL? {
+        guard let url = URL(string: string),
+              safeFalStorageUploadURL(url)
+        else {
+            return nil
+        }
+        return url
+    }
+
+    static func safeFalStorageUploadURL(_ url: URL) -> Bool {
+        guard safeExternalHTTPSURL(url),
+              let host = url.host?.normalizedHostForPolicy
+        else {
+            return false
+        }
+        return host.isAllowedFalStorageUploadHost
+    }
+
+    static func safeFalDirectCDNV3UploadURL(from string: String) -> URL? {
+        guard let url = URL(string: string),
+              safeFalDirectCDNV3UploadURL(url)
+        else {
+            return nil
+        }
+        return url
+    }
+
+    static func safeFalDirectCDNV3UploadURL(_ url: URL) -> Bool {
+        guard safeExternalHTTPSURL(url),
+              let host = url.host?.normalizedHostForPolicy
+        else {
+            return false
+        }
+        return host.isAllowedDirectFalCDNV3UploadHost
+    }
+
+    static func safeFalStorageFileURL(from string: String) -> URL? {
+        guard let url = URL(string: string),
+              safeFalStorageFileURL(url)
+        else {
+            return nil
+        }
+        return url
+    }
+
+    static func safeFalStorageFileURL(_ url: URL) -> Bool {
+        guard safeExternalHTTPSURL(url),
+              let host = url.host?.normalizedHostForPolicy
+        else {
+            return false
+        }
+        return host.isAllowedFalStorageFileHost
+    }
 }
 
 func encodeTypedInputRejectingBinaryData<Input: Encodable>(
@@ -264,6 +459,29 @@ func encodeTypedInputRejectingBinaryData<Input: Encodable>(
 }
 
 private extension String {
+    var normalizedHostForPolicy: String {
+        lowercased().trimmingSuffix(".")
+    }
+
+    var isAllowedFalStorageUploadHost: Bool {
+        isEqualToOrSubdomain(of: "storage.googleapis.com")
+            || isEqualToOrSubdomain(of: "v3.fal.media")
+            || isEqualToOrSubdomain(of: "fal.media")
+    }
+
+    var isAllowedDirectFalCDNV3UploadHost: Bool {
+        isEqualToOrSubdomain(of: "v3.fal.media")
+    }
+
+    var isAllowedFalStorageFileHost: Bool {
+        isEqualToOrSubdomain(of: "v3.fal.media")
+            || isEqualToOrSubdomain(of: "fal.media")
+    }
+
+    func isEqualToOrSubdomain(of domain: String) -> Bool {
+        self == domain || hasSuffix(".\(domain)")
+    }
+
     var isLocalOrPrivateHost: Bool {
         let host = lowercased().trimmingSuffix(".")
         if host == "localhost" || host.hasSuffix(".localhost") {
@@ -353,6 +571,40 @@ private extension String {
         }
         return UInt64(component, radix: 10)
     }
+}
+
+private struct TerminalStorageUploadError: Error {
+    let underlying: Error
+}
+
+private func shouldFallbackAfterStorageUploadError(_ error: Error) -> Bool {
+    if error is CancellationError {
+        return false
+    }
+    if let urlError = error as? URLError, urlError.code == .cancelled {
+        return false
+    }
+    if let falError = error as? FalError {
+        switch falError {
+        case .invalidUrl,
+             .unsupportedInput,
+             .unsupportedOperation,
+             .invalidAppId,
+             .queueTimeout,
+             .invalidResultFormat:
+            return false
+        case let .httpError(error):
+            return error.statusCode == 408
+                || error.statusCode == 409
+                || error.statusCode == 425
+                || error.statusCode == 429
+                || error.statusCode >= 500
+        }
+    }
+    if let urlError = error as? URLError {
+        return urlError.code != .badURL
+    }
+    return false
 }
 
 private extension Array where Element == Int {

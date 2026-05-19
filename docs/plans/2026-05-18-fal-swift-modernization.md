@@ -119,7 +119,9 @@ External references checked:
   - `Payload.data` on GET requests now fails before query serialization to avoid leaking binary data into URLs.
   - Presigned PUT redirects are validated before following when using the built-in URLSession transport, and final response URLs are checked as a fallback for fake/custom transports.
   - Invalid storage URL associated values now redact query strings and fragments before throwing.
-  - Remaining: direct CDN upload/token flow, fallback repositories, multipart upload for large files, and an explicit DNS/host allowlist policy for public-looking storage hosts that resolve to private addresses.
+  - Added opt-in direct Fal CDN v3 upload using the REST CDN token endpoint, plus explicit fallback repository sequencing from the existing presigned flow to direct CDN v3.
+  - Added a storage-specific host allowlist for upload, redirect, and returned file URLs so storage no longer trusts arbitrary public-looking HTTPS hosts.
+  - Remaining: `fal.media` fallback repository, multipart upload for large files, and a final DNS policy decision as defense-in-depth beyond the explicit host allowlist.
 
 ## P1: Robustness and Test Coverage
 
@@ -180,7 +182,7 @@ External references checked:
 
 High-leverage implementation work that remains after the completed queue, streaming, endpoint parsing, request-option, and first storage modernization slices:
 
-- Storage security/parity: evaluate direct `v3.fal.media` token flow, fallback repositories, multipart upload, and whether storage PUTs should use DNS resolution or a documented storage-host allowlist to mitigate public hostnames that resolve to private addresses.
+- Storage security/parity: add `fal.media` fallback repository, multipart upload, and decide whether DNS checks are useful defense-in-depth beyond the now explicit storage host allowlist.
 - Client reliability: decide whether any future retry knobs should be public configuration.
 - Realtime follow-up: refresh README/sample guidance and decide whether a public custom token-provider hook is useful for this fork.
 - Release readiness: README refresh, markdown guides, sample cleanup/legacy labeling, CI, changelog, contributing guide, and user-agent/package version cleanup.
@@ -211,6 +213,7 @@ High-leverage implementation work that remains after the completed queue, stream
 - 2026-05-18: Added an internal bounded retry policy for transient queue status/result and presigned storage PUT failures, while keeping direct run, direct stream, storage initiate, cancellation, and fal user-timeout responses single-attempt.
 - 2026-05-18: Added explicit payload subscribe timeout/cancellation coverage, including status-detail cancellation, cancel-failure preservation, and concrete queue dispatch for payload option overloads.
 - 2026-05-18: Replaced active Fal image byte loading with async throwing `loadData(using:)` helpers, safe external HTTPS URL and redirect validation, URLSession loader tests, and a realtime sample update that cancels stale image loads.
+- 2026-05-18: Added opt-in direct Fal CDN v3 storage uploads via the REST CDN token endpoint, client-side fallback repository sequencing, and storage-specific host allowlisting for upload, redirect, and returned file URLs.
 
 ## Non-Goals
 
