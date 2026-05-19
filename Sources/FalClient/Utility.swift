@@ -6,6 +6,10 @@ func buildUrl(fromId id: String, path: String? = nil, subdomain: String? = nil) 
     return "https://\(sub)fal.run/\(appId)" + (path ?? "")
 }
 
+func queueRequestPath(for requestId: String, suffix: String = "") -> String {
+    "/requests/\(requestId.percentEncodedQueueRequestPathSegment)\(suffix)"
+}
+
 func ensureAppIdFormat(_ id: String) throws -> String {
     let parts = id.split(separator: "/")
     if parts.count > 1 {
@@ -44,5 +48,12 @@ struct AppId {
             appAlias: parts[1],
             path: parts.endIndex > 2 ? parts.dropFirst(2).joined(separator: "/") : nil
         )
+    }
+}
+
+private extension String {
+    var percentEncodedQueueRequestPathSegment: String {
+        let allowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_~")
+        return addingPercentEncoding(withAllowedCharacters: allowed) ?? ""
     }
 }

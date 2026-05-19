@@ -63,16 +63,23 @@ public struct FalClient: Client {
 
     public func run(_ app: String, input: Payload?, options: RunOptions) async throws -> Payload {
         var requestInput = input
-        if let storage = storage as? StorageClient,
-           let input,
-           options.httpMethod != .get,
-           input.hasBinaryData
-        {
+        if let input, input.hasBinaryData {
+            guard options.httpMethod != .get else {
+                throw FalError.unsupportedInput(
+                    message: "Payload.data cannot be sent with GET requests because binary values would be serialized into the URL. Use a POST request so binary values can be uploaded before request encoding."
+                )
+            }
             requestInput = try await storage.autoUpload(input: input)
         }
         let queryParams = options.httpMethod == .get ? input : nil
         let url = buildUrl(fromId: app, path: options.path)
-        let data = try await sendRequest(to: url, input: requestInput?.json(), queryParams: queryParams?.asDictionary, options: options)
+        let data = try await sendRequest(
+            to: url,
+            input: requestInput?.json(),
+            queryParams: queryParams?.asDictionary,
+            options: options,
+            includeQueuePriority: false
+        )
         return try .create(fromJSON: data)
     }
 
@@ -85,26 +92,15 @@ public struct FalClient: Client {
         onQueueUpdate: OnQueueUpdate?
     ) async throws -> Payload {
         let requestId = try await queue.submit(app, input: input)
-        let deadline = Date().addingTimeInterval(TimeInterval(timeout.milliseconds) / 1000.0)
-        var isCompleted = false
-
-        while Date() < deadline {
-            try Task.checkCancellation()
-
-            let update = try await queue.status(app, of: requestId, includeLogs: includeLogs)
-            onQueueUpdate?(update)
-
-            isCompleted = update.isCompleted
-            if isCompleted {
-                break
-            }
-
-            try await Task.sleep(nanoseconds: UInt64(pollInterval.milliseconds) * 1_000_000)
-        }
-
-        if !isCompleted {
-            throw FalError.queueTimeout
-        }
+        try await pollQueueUntilCompleted(
+            queue: queue,
+            app: app,
+            requestId: requestId,
+            pollInterval: pollInterval,
+            timeout: timeout,
+            includeLogs: includeLogs,
+            onQueueUpdate: onQueueUpdate
+        )
         return try await queue.response(app, of: requestId)
     }
 }

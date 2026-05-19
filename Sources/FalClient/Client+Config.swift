@@ -1,7 +1,15 @@
 import Foundation
 
-public enum ClientCredentials: CustomStringConvertible {
+public enum ClientCredentials: CustomReflectable, CustomStringConvertible {
     public var description: String {
+        "<redacted>"
+    }
+
+    public var customMirror: Mirror {
+        Mirror(reflecting: "<redacted>")
+    }
+
+    var rawValue: String {
         switch self {
         case let .keyPair(value):
             return value
