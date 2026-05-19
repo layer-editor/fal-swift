@@ -93,7 +93,7 @@ extension Client {
         request.setValue(accept, forHTTPHeaderField: "accept")
         request.setValue("application/json", forHTTPHeaderField: "content-type")
         request.setValue(userAgent, forHTTPHeaderField: "user-agent")
-        options.applyHeaders(to: &request, includeQueuePriority: includeQueuePriority)
+        try options.applyHeaders(to: &request, includeQueuePriority: includeQueuePriority)
 
         if shouldApplyAuthorizationHeader {
             let credentials = config.credentials.rawValue
@@ -198,7 +198,7 @@ private func checkHTTPResponseStatus(for response: URLResponse, withData data: D
 }
 
 private extension RunOptions {
-    func applyHeaders(to request: inout URLRequest, includeQueuePriority: Bool) {
+    func applyHeaders(to request: inout URLRequest, includeQueuePriority: Bool) throws {
         for (name, value) in headers {
             guard !name.isProtectedCallerHeader else {
                 continue
@@ -221,7 +221,7 @@ private extension RunOptions {
             request.setValue(storesInputOutput ? "1" : "0", forHTTPHeaderField: "X-Fal-Store-IO")
         }
         if let objectLifecyclePreference {
-            request.setValue(objectLifecyclePreference.headerValue, forHTTPHeaderField: "X-Fal-Object-Lifecycle-Preference")
+            request.setValue(try objectLifecyclePreference.headerValue(), forHTTPHeaderField: "X-Fal-Object-Lifecycle-Preference")
         }
         if isFallbackDisabled {
             request.setValue("true", forHTTPHeaderField: "x-app-fal-disable-fallback")
@@ -244,9 +244,14 @@ private extension String {
     }
 }
 
-private extension FalObjectLifecyclePreference {
-    var headerValue: String {
-        "{\"expiration_duration_seconds\":\(expirationDuration.headerNumberValue)}"
+extension FalObjectLifecyclePreference {
+    func headerValue() throws -> String {
+        guard expirationDuration.isFinite, expirationDuration > 0 else {
+            throw FalError.unsupportedInput(
+                message: "Object lifecycle expiration duration must be finite and greater than 0 seconds."
+            )
+        }
+        return "{\"expiration_duration_seconds\":\(expirationDuration.headerNumberValue)}"
     }
 }
 

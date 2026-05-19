@@ -21,7 +21,7 @@ The Swift client has a useful core: direct `run`, queue-backed `subscribe`, manu
 | realtime | Present | Needs custom path/token-provider parity and concurrency hardening | P1 |
 | platform headers | Mostly missing | `start_timeout`, `hint`, `priority`, custom headers, storage/retry/fallback controls | P1 |
 | namespaced endpoints | Present | Peer clients preserve namespace/path pieces | P1 |
-| storage uploads | Basic | Peer clients support newer storage/CDN behavior and lifecycle options | P1/P2 |
+| storage uploads | Improved | Initiates `fal-cdn-v3` uploads with file-name and lifecycle options; direct CDN, fallback, and multipart remain | P1/P2 |
 
 ## Queue API Gaps
 
@@ -93,16 +93,23 @@ Implemented model:
 
 ## Storage Parity
 
-Current storage is good enough for simple top-level `Payload.data`, but not robust enough for production media-heavy apps.
+Current storage covers simple and nested `Payload.data` uploads and now exposes a small options surface for upload metadata.
 
-Track separately from queue parity:
+Implemented:
 
 - Recursive `Payload` upload transform.
 - Explicit typed `Data` behavior.
 - Better upload URL validation.
 - Custom file names/content type.
 - Object lifecycle preferences.
-- Review fal CDN v3 and multipart upload after the core request option model exists.
+- `rest.fal.ai` initiate endpoint with `storage_type=fal-cdn-v3`.
+
+Still separate from this small chunk:
+
+- Direct `v3.fal.media` upload path with CDN auth token management.
+- Fallback repositories.
+- Multipart upload for large files.
+- Redirect validation and stricter invalid presigned URL redaction.
 
 ## References
 

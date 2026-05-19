@@ -26,7 +26,7 @@ final class HTTPTransportTests: XCTestCase {
 
     func testStorageUploadUsesInjectedHTTPTransportForInitiateAndPut() async throws {
         let transport = RecordingHTTPTransport { request in
-            if request.url?.absoluteString == "https://rest.alpha.fal.ai/storage/upload/initiate" {
+            if request.url?.absoluteString == "https://rest.fal.ai/storage/upload/initiate?storage_type=fal-cdn-v3" {
                 let response = HTTPURLResponse(
                     url: request.url!,
                     statusCode: 200,
@@ -57,7 +57,7 @@ final class HTTPTransportTests: XCTestCase {
 
         XCTAssertEqual(fileUrl, "https://fal.media/file.png")
         XCTAssertEqual(transport.requests.map { $0.url?.absoluteString }, [
-            "https://rest.alpha.fal.ai/storage/upload/initiate",
+            "https://rest.fal.ai/storage/upload/initiate?storage_type=fal-cdn-v3",
             "https://storage.googleapis.com/upload",
         ])
         XCTAssertEqual(transport.requests.last?.httpMethod, "PUT")

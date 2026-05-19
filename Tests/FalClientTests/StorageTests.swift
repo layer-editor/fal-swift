@@ -2,6 +2,198 @@
 import XCTest
 
 final class StorageTests: XCTestCase {
+    func testUploadInitiateSendsGeneratedFileNameAndNoLifecycleByDefault() async throws {
+        let transport = RecordingHTTPTransport { request in
+            if request.url?.host == "rest.fal.ai" {
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!
+                let data = """
+                {
+                  "file_url": "https://fal.media/generated.png",
+                  "upload_url": "https://storage.googleapis.com/upload"
+                }
+                """.data(using: .utf8)!
+                return HTTPTransportResponse(data: data, response: response)
+            }
+
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: nil
+            )!
+            return HTTPTransportResponse(data: Data(), response: response)
+        }
+        let storage: Storage = StorageClient(client: StorageTestClient(httpTransport: transport))
+
+        _ = try await storage.upload(data: Data("image".utf8), ofType: .imagePng)
+
+        let initiateRequest = try XCTUnwrap(transport.requests.first)
+        XCTAssertEqual(initiateRequest.httpMethod, "POST")
+        XCTAssertEqual(
+            initiateRequest.url?.absoluteString,
+            "https://rest.fal.ai/storage/upload/initiate?storage_type=fal-cdn-v3"
+        )
+        let body = try Payload.create(fromJSON: try XCTUnwrap(initiateRequest.httpBody))
+        XCTAssertEqual(body["content_type"].stringValue, "image/png")
+        let fileName = try XCTUnwrap(body["file_name"].stringValue)
+        XCTAssertTrue(fileName.hasSuffix(".png"))
+        XCTAssertNil(initiateRequest.value(forHTTPHeaderField: "X-Fal-Object-Lifecycle"))
+        XCTAssertNil(initiateRequest.value(forHTTPHeaderField: "X-Fal-Object-Lifecycle-Preference"))
+    }
+
+    func testUploadOptionsSendFileNameAndLifecycleHeadersOnInitiateOnly() async throws {
+        let image = Data("image".utf8)
+        let transport = RecordingHTTPTransport { request in
+            if request.url?.host == "rest.fal.ai" {
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!
+                let data = """
+                {
+                  "file_url": "https://fal.media/custom.png",
+                  "upload_url": "https://storage.googleapis.com/upload"
+                }
+                """.data(using: .utf8)!
+                return HTTPTransportResponse(data: data, response: response)
+            }
+
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: nil
+            )!
+            return HTTPTransportResponse(data: Data(), response: response)
+        }
+        let storage: Storage = StorageClient(client: StorageTestClient(httpTransport: transport))
+
+        let fileUrl = try await storage.upload(
+            data: image,
+            ofType: .imagePng,
+            options: StorageUploadOptions(
+                fileName: "custom.png",
+                objectLifecyclePreference: .init(expirationDuration: 3_600)
+            )
+        )
+
+        XCTAssertEqual(fileUrl, "https://fal.media/custom.png")
+        XCTAssertEqual(transport.requests.map { $0.url?.absoluteString }, [
+            "https://rest.fal.ai/storage/upload/initiate?storage_type=fal-cdn-v3",
+            "https://storage.googleapis.com/upload",
+        ])
+
+        let initiateRequest = try XCTUnwrap(transport.requests.first)
+        let initiateBody = try Payload.create(fromJSON: try XCTUnwrap(initiateRequest.httpBody))
+        XCTAssertEqual(initiateBody["content_type"].stringValue, "image/png")
+        XCTAssertEqual(initiateBody["file_name"].stringValue, "custom.png")
+        XCTAssertEqual(
+            initiateRequest.value(forHTTPHeaderField: "X-Fal-Object-Lifecycle"),
+            #"{"expiration_duration_seconds":3600}"#
+        )
+        XCTAssertNil(initiateRequest.value(forHTTPHeaderField: "X-Fal-Object-Lifecycle-Preference"))
+
+        let putRequest = try XCTUnwrap(transport.requests.last)
+        XCTAssertEqual(putRequest.httpMethod, "PUT")
+        XCTAssertEqual(putRequest.httpBody, image)
+        XCTAssertEqual(putRequest.value(forHTTPHeaderField: "Content-Type"), "image/png")
+        XCTAssertEqual(putRequest.value(forHTTPHeaderField: "Content-Length"), String(image.count))
+        XCTAssertNil(putRequest.value(forHTTPHeaderField: "Authorization"))
+        XCTAssertNil(putRequest.value(forHTTPHeaderField: "X-Fal-Object-Lifecycle"))
+        XCTAssertNil(putRequest.value(forHTTPHeaderField: "X-Fal-Object-Lifecycle-Preference"))
+    }
+
+    func testUploadOptionsRejectInvalidLifecycleDurationBeforeSendingRequest() async throws {
+        let transport = RecordingHTTPTransport { request in
+            XCTFail("Unexpected request to \(request.url?.absoluteString ?? "nil")")
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: nil
+            )!
+            return HTTPTransportResponse(data: Data(), response: response)
+        }
+        let storage: Storage = StorageClient(client: StorageTestClient(httpTransport: transport))
+
+        do {
+            _ = try await storage.upload(
+                data: Data("image".utf8),
+                ofType: .imagePng,
+                options: .init(objectLifecyclePreference: .init(expirationDuration: -.infinity))
+            )
+            XCTFail("Expected upload to reject invalid lifecycle duration")
+        } catch FalError.unsupportedInput(let message) {
+            XCTAssertEqual(message, "Object lifecycle expiration duration must be finite and greater than 0 seconds.")
+        }
+
+        XCTAssertTrue(transport.requests.isEmpty)
+    }
+
+    func testUploadOptionsSanitizeCustomFileName() async throws {
+        let transport = RecordingHTTPTransport { request in
+            if request.url?.host == "rest.fal.ai" {
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!
+                let data = """
+                {
+                  "file_url": "https://fal.media/custom.png",
+                  "upload_url": "https://storage.googleapis.com/upload"
+                }
+                """.data(using: .utf8)!
+                return HTTPTransportResponse(data: data, response: response)
+            }
+
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: nil
+            )!
+            return HTTPTransportResponse(data: Data(), response: response)
+        }
+        let storage = StorageClient(client: StorageTestClient(httpTransport: transport))
+
+        _ = try await storage.upload(
+            data: Data("image".utf8),
+            ofType: .imagePng,
+            options: .init(fileName: "C:\\Users\\chris\\private\rname.png")
+        )
+
+        let initiateRequest = try XCTUnwrap(transport.requests.first)
+        let body = try Payload.create(fromJSON: try XCTUnwrap(initiateRequest.httpBody))
+        XCTAssertEqual(body["file_name"].stringValue, "private_name.png")
+    }
+
+    func testStorageUploadConvenienceCallsRemainSourceCompatible() async throws {
+        let storage = RecordingStorage()
+
+        _ = try await storage.upload(data: Data("default".utf8))
+        _ = try await storage.upload(data: Data("png".utf8), ofType: .imagePng)
+        _ = try await storage.upload(data: Data("empty-options".utf8), ofType: .imagePng, options: .init())
+
+        do {
+            _ = try await storage.upload(
+                data: Data("custom-options".utf8),
+                ofType: .imagePng,
+                options: .init(fileName: "custom.png")
+            )
+            XCTFail("Expected custom storage implementation to reject non-empty options")
+        } catch FalError.unsupportedOperation {
+        }
+    }
+
     func testAutoUploadRecursivelyUploadsNestedPayloadData() async throws {
         let storage = RecordingStorage()
         let input: Payload = [

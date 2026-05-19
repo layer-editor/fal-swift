@@ -109,13 +109,14 @@ External references checked:
   - Queue follow-up operations (`status`, `streamStatus`, `response`, `cancel`) use the stable namespace/owner/alias queue base for `workflows` and `comfy`.
 
 - [ ] Modernize storage uploads after request options land.
-  - Move away from `rest.alpha.fal.ai` where appropriate.
+  - Move away from `rest.alpha.fal.ai` where appropriate. Upload initiation now uses `https://rest.fal.ai/storage/upload/initiate?storage_type=fal-cdn-v3`.
   - Add lifecycle settings, file names, recursive `Payload` transform, and explicit behavior for typed `Data`.
+  - Storage upload options now support custom file names and uploaded-file lifecycle headers while preserving existing `Storage` conformers.
   - Recursive `Payload.data` upload transforms are now implemented for dictionaries and arrays.
   - Payload auto-upload now works through the `Storage` protocol, so custom storage conformers can participate.
   - Typed `Encodable` inputs containing `Data` now fail at JSON encoding time instead of silently sending base64 JSON, including custom `encode(to:)` implementations.
   - `Payload.data` on GET requests now fails before query serialization to avoid leaking binary data into URLs.
-  - Evaluate fal CDN v3 and multipart support as a separate implementation step, because that can grow quickly.
+  - Evaluate direct CDN upload, fallback repositories, redirect validation, redacted invalid upload URL values, and multipart support as separate implementation steps, because those can grow quickly.
 
 ## P1: Robustness and Test Coverage
 
@@ -185,6 +186,7 @@ External references checked:
 - 2026-05-18: Updated streaming architecture guidance after queue status streaming review: pull-driven streams, bounded SSE error bodies, heartbeat/comment tolerance, shared generic event decoding before direct `/stream`, and explicit ownership semantics for queue observation versus request-owning subscribe flows.
 - 2026-05-18: Added direct `FalClient.stream(...)` support for model `/stream` SSE endpoints with narrow `StreamOptions`, Payload and typed event decoding, custom stream paths, client HTTP timeout, and fake-transport coverage for error payloads and typed binary input rejection.
 - 2026-05-18: Added reserved-namespace endpoint parsing for `workflows/...` and `comfy/...`, normalized endpoint path joining, and queue follow-up URL construction that uses namespace/owner/alias while preserving endpoint subpaths for submit/direct calls.
+- 2026-05-18: Modernized the storage initiate endpoint to `rest.fal.ai` with `fal-cdn-v3`, added `StorageUploadOptions` for custom file names and uploaded-file lifecycle headers, sanitized custom file names, and kept presigned PUT requests free of Fal auth and lifecycle headers.
 
 ## Non-Goals
 

@@ -25,13 +25,14 @@ Recently added request-option coverage:
 - Queue status SSE request construction, path escaping, `logs=1`, default query omission, decoding, heartbeat-tolerant parsing, and HTTP error payload preservation.
 - Direct model stream request construction, default and custom stream paths, client HTTP timeout, Payload and typed event decoding, HTTP error payload preservation, and typed binary input rejection before request construction.
 - Reserved namespace endpoint parsing for `workflows/...` and `comfy/...`, including submit path preservation and namespace/owner/alias queue-base construction for status, stream-status, response, and cancel.
+- Storage upload options for generated/default file names, sanitized custom file names, uploaded-file lifecycle headers on initiate, and clean presigned PUT headers/body.
 
 Remaining gaps:
 
 - Public transport injection for downstream package tests; the current seam is intentionally internal.
 - 422 validation payload message behavior for structured `detail` arrays.
 - Fake WebSocket/session boundary tests around realtime open/receive/close behavior.
-- Storage upload host trust policy beyond client-side URL rejection, especially DNS names that resolve to private IPs.
+- Storage upload host trust policy beyond client-side URL rejection, especially DNS names that resolve to private IPs, presigned URL redirects, and raw invalid URL associated values that may contain signed query parameters.
 - Realtime WebSocket lifecycle tests with a fake socket/session boundary.
 
 ## Test Infrastructure First

@@ -34,6 +34,30 @@ public enum FileType {
     }
 }
 
+/// Options that customize a storage upload.
+public struct StorageUploadOptions: Equatable, Sendable {
+    /// File name sent to fal as upload metadata.
+    ///
+    /// This value may be visible in storage metadata or generated URLs. Only
+    /// the final path component is used.
+    public let fileName: String?
+
+    /// CDN lifecycle preference for the uploaded file.
+    public let objectLifecyclePreference: FalObjectLifecyclePreference?
+
+    /// Creates storage upload options.
+    /// - Parameters:
+    ///   - fileName: File name sent to fal as upload metadata.
+    ///   - objectLifecyclePreference: CDN lifecycle preference for the uploaded file.
+    public init(
+        fileName: String? = nil,
+        objectLifecyclePreference: FalObjectLifecyclePreference? = nil
+    ) {
+        self.fileName = fileName
+        self.objectLifecyclePreference = objectLifecyclePreference
+    }
+}
+
 /// This establishes the contract of the client with the storage API. The storage API is used
 /// to upload files to the fal.ai storage so model APIs can access the files when needed.
 ///
@@ -44,11 +68,32 @@ public protocol Storage {
 
     /// Uploads the given `data` to the fal.ai storage and returns the URL of the uploaded file.
     func upload(data: Data, ofType type: FileType) async throws -> String
+
+    /// Uploads the given `data` with additional metadata and returns the URL of the uploaded file.
+    func upload(data: Data, ofType type: FileType, options: StorageUploadOptions) async throws -> String
 }
 
 public extension Storage {
     func upload(data: Data, ofType type: FileType = .applicationStream) async throws -> String {
-        try await upload(data: data, ofType: type)
+        return try await upload(data: data, ofType: type)
+    }
+
+    /// Uploads data with additional upload metadata.
+    ///
+    /// Custom `Storage` conformers that only implement `upload(data:ofType:)`
+    /// remain source-compatible. Those conformers accept empty options and
+    /// reject non-empty options unless they implement this overload.
+    func upload(
+        data: Data,
+        ofType type: FileType = .applicationStream,
+        options: StorageUploadOptions
+    ) async throws -> String {
+        guard options == .init() else {
+            throw FalError.unsupportedOperation(
+                message: "The active Storage implementation does not support upload options."
+            )
+        }
+        return try await upload(data: data, ofType: type)
     }
 
     func autoUpload(input: Payload) async throws -> Payload {
@@ -88,21 +133,39 @@ struct UploadUrl: Codable {
 struct StorageClient: Storage {
     let client: Client
 
-    func initiateUpload(data _: Data, ofType type: FileType) async throws -> UploadUrl {
+    func initiateUpload(
+        data _: Data,
+        ofType type: FileType,
+        options: StorageUploadOptions
+    ) async throws -> UploadUrl {
         let input: Payload = [
             "content_type": .string(type.mimeType),
-            "file_name": .string("\(UUID().uuidString).\(type.fileExtension)"),
+            "file_name": .string(options.normalizedFileName(for: type)),
         ]
+        var requestOptions = RunOptions.withMethod(.post)
+        if let objectLifecyclePreference = options.objectLifecyclePreference {
+            let lifecycleHeader = try objectLifecyclePreference.headerValue()
+            requestOptions = RunOptions(
+                httpMethod: .post,
+                headers: [
+                    "X-Fal-Object-Lifecycle": lifecycleHeader,
+                ]
+            )
+        }
         let response = try await client.sendRequest(
-            to: "https://rest.alpha.fal.ai/storage/upload/initiate",
+            to: "https://rest.fal.ai/storage/upload/initiate?storage_type=fal-cdn-v3",
             input: input.json(),
-            options: .withMethod(.post)
+            options: requestOptions
         )
         return try JSONDecoder().decode(UploadUrl.self, from: response)
     }
 
     func upload(data: Data, ofType type: FileType) async throws -> String {
-        let uploadUrl = try await initiateUpload(data: data, ofType: type)
+        try await upload(data: data, ofType: type, options: .init())
+    }
+
+    func upload(data: Data, ofType type: FileType, options: StorageUploadOptions) async throws -> String {
+        let uploadUrl = try await initiateUpload(data: data, ofType: type, options: options)
         guard let url = URL.safeExternalHTTPSURL(from: uploadUrl.uploadUrl) else {
             throw FalError.invalidUrl(url: uploadUrl.uploadUrl)
         }
@@ -123,6 +186,38 @@ struct StorageClient: Storage {
         try client.checkResponseStatus(for: transportResponse.response, withData: transportResponse.data)
 
         return uploadUrl.fileUrl
+    }
+}
+
+private extension StorageUploadOptions {
+    func normalizedFileName(for type: FileType) -> String {
+        guard let fileName else {
+            return "\(UUID().uuidString).\(type.fileExtension)"
+        }
+        let component = fileName
+            .split(whereSeparator: { $0 == "/" || $0 == "\\" })
+            .last
+            .map(String.init) ?? fileName
+        let sanitized = String(
+            component
+                .prefix(255)
+                .map { character in
+                    character.isAllowedUploadFileNameCharacter ? character : "_"
+                }
+        )
+        return sanitized.isEmpty ? "\(UUID().uuidString).\(type.fileExtension)" : sanitized
+    }
+}
+
+private extension Character {
+    var isAllowedUploadFileNameCharacter: Bool {
+        guard let scalar = unicodeScalars.first, unicodeScalars.count == 1 else {
+            return false
+        }
+        if CharacterSet.controlCharacters.contains(scalar) || self == "/" || self == "\\" {
+            return false
+        }
+        return true
     }
 }
 
