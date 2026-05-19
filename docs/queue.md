@@ -2,6 +2,11 @@
 
 Use queue-backed APIs for model requests that may take more than a few seconds.
 
+Canonical references: Fal's [Asynchronous Inference](https://fal.ai/docs/documentation/model-apis/inference/queue)
+docs are the source of truth for queue lifecycle, status shapes, cancellation,
+webhooks, and timeout semantics. See [Reference Sources](reference-sources.md)
+for the peer Python and JavaScript queue APIs used for parity checks.
+
 ## Subscribe
 
 `subscribe` submits a request, polls until completion, and returns the model response.

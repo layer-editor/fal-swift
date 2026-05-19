@@ -10,6 +10,9 @@ This sample shows a SwiftUI drawing surface connected to a Fal realtime endpoint
 - async image loading from `FalImage`
 - closing the connection when the view disappears, with reconnect on the next appearance or send
 
+Canonical references: Fal's realtime docs and peer realtime client are linked
+from [Reference Sources](../../../docs/reference-sources.md).
+
 ## Setup
 
 The sample defaults to:

@@ -2,6 +2,11 @@
 
 A pragmatic Swift client for Fal model APIs. This fork focuses on production Apple-platform app needs: direct requests, queue-backed inference, model discovery, streaming, realtime connections, storage uploads, typed `Codable` calls, and testable networking.
 
+For drift prevention, this repo links back to Fal's canonical documentation and
+the peer packages used for parity review. Start with [Reference Sources](docs/reference-sources.md)
+before changing request lifecycle, streaming, realtime, storage, or model
+catalog behavior.
+
 ## Installation
 
 Add the package with Swift Package Manager:

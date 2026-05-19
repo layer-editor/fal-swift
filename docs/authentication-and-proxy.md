@@ -2,6 +2,11 @@
 
 `FalClient` supports three practical authentication modes:
 
+Canonical references: Fal's [Client Setup](https://fal.ai/docs/documentation/model-apis/inference/client-setup)
+and [Proxy Setup](https://fal.ai/docs/documentation/model-apis/inference/proxy-setup)
+docs are the source of truth for credential and proxy guidance. See
+[Reference Sources](reference-sources.md) for peer client behavior.
+
 - `FalClient.withCredentials(.fromEnv)` for command-line tools and local development with `FAL_KEY`, `FAL_KEY_ID`, or `FAL_KEY_SECRET`.
 - `FalClient.withCredentials(.keyPair("id:secret"))` for server-side code that can safely hold long-lived credentials.
 - `FalClient.withProxy(...)` or `FalClient.withBearerToken(...)` for client apps.

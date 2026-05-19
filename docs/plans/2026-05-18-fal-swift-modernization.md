@@ -2,6 +2,8 @@
 
 **Goal:** Bring `FalClient` into practical parity with current fal model API clients while improving safety, testability, and Apple-platform ergonomics without refactoring for its own sake.
 
+**Canonical references:** Use [Reference Sources](../reference-sources.md) before changing API behavior or updating this plan. Fal docs remain the source of truth; peer Python, JavaScript, Kotlin/Java, Dart, and Swift clients are parity inputs.
+
 **Architecture:** Keep the public facade small: `FalClient` plus `queue`, `storage`, `realtime`, `models`, and streaming surfaces. Add internal seams only where they pay for themselves: request construction, HTTP transport, queue polling/status streaming, generic SSE event decoding, model catalog/schema extraction, and error metadata. Preserve current call sites first; introduce additive options and deprecations before removals.
 
 **Streaming Architecture Rule:** SSE consumers should be pull-driven by the caller's `AsyncSequence` iteration, not eager producer tasks with unbounded buffering. Treat SSE as a protocol boundary: support comments/heartbeats, extra blank separators, multiline `data:` payloads, EOF after a final event, bounded non-2xx error bodies, and Fal HTTP error payload preservation.
@@ -36,8 +38,8 @@ Local repo at the start of this planning effort:
 
 External references checked:
 
-- fal docs: [Client Setup](https://fal.ai/docs/documentation/model-apis/inference/client-setup), [Asynchronous Inference](https://fal.ai/docs/documentation/model-apis/inference/queue), [Streaming Inference](https://fal.ai/docs/documentation/model-apis/inference/streaming), [Real-Time Inference](https://fal.ai/docs/documentation/model-apis/inference/real-time), [Platform Headers](https://fal.ai/docs/documentation/model-apis/common-parameters), [Request Error Types](https://fal.ai/docs/documentation/model-apis/request-errors)
-- Peer clients: `fal-ai/fal-js` at `442a757`, `fal-ai/fal` Python client at `e70e60a`, `fal-ai/fal-java` at `c998c35`, `fal-ai/fal-dart` at `6871206`
+- fal docs: see [Reference Sources](../reference-sources.md) for the current canonical docs index and specific Model API pages.
+- Peer clients checked during the original audit: `fal-ai/fal-js` at `442a757`, `fal-ai/fal` Python client at `e70e60a`, `fal-ai/fal-java` at `c998c35`, `fal-ai/fal-dart` at `6871206`. Re-check the public docs and package references before making new parity claims.
 
 ## Priority Model
 

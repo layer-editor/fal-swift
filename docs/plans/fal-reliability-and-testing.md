@@ -2,6 +2,8 @@
 
 This document tracks correctness risks and the targeted tests needed before broad API work. The goal is confidence, not a large test suite for its own sake.
 
+Use [Reference Sources](../reference-sources.md) when updating tests for queue, streaming, realtime, storage, model catalog, or error behavior. Tests should encode Swift package behavior, but expectations should be checked against Fal's canonical docs and the peer Python/JavaScript clients when parity matters.
+
 ## Current Test Baseline
 
 Existing tests now cover helper behavior plus the first request, queue, storage, and error hardening slices:
@@ -272,6 +274,4 @@ swift build --target FalClient --configuration release
 
 ## References
 
-- [fal async queue docs](https://fal.ai/docs/documentation/model-apis/inference/queue)
-- [fal request error types](https://fal.ai/docs/documentation/model-apis/request-errors)
-- [fal platform headers](https://fal.ai/docs/documentation/model-apis/common-parameters)
+- [Canonical Fal and peer package sources](../reference-sources.md)

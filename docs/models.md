@@ -2,6 +2,12 @@
 
 Use `fal.models` when an app needs to browse Fal models, build a dynamic playground, or keep supported endpoint metadata outside app releases.
 
+Canonical references: Fal's model gallery, [Platform APIs for Models](https://fal.ai/docs/api-reference/platform-apis/for-models),
+and [Platform OpenAPI Schema](https://fal.ai/docs/api-reference/platform-apis/openapi-schema)
+docs are the source of truth for catalog and schema behavior. See
+[Reference Sources](reference-sources.md) for the peer packages used while
+building this feature.
+
 Model discovery uses Fal's platform model search API at `https://api.fal.ai/v1/models`. Authentication is optional for basic discovery, but authenticated requests may have higher rate limits. In shipped client apps, use the same proxy or short-lived credential strategy described in [Authentication and Proxy](authentication-and-proxy.md).
 
 ## Search

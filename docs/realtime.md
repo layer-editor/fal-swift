@@ -2,6 +2,10 @@
 
 Realtime APIs use Fal's WebSocket token endpoint and connection pool.
 
+Canonical references: Fal's [Real-Time Inference](https://fal.ai/docs/documentation/model-apis/inference/real-time)
+docs define the model API behavior, and the JavaScript realtime client is the
+closest peer package for connection semantics. See [Reference Sources](reference-sources.md).
+
 ```swift
 let connection = try fal.realtime.connect(
     to: "fal-ai/fast-turbo-diffusion/image-to-image",

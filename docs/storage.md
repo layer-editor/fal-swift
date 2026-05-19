@@ -2,6 +2,11 @@
 
 `FalClient` uploads local binary inputs to Fal CDN and passes the returned URL to model APIs. CDN URLs are public-by-URL and follow Fal media retention settings, so callers should set lifecycle preferences for temporary or sensitive assets.
 
+Canonical references: Fal's [fal CDN](https://fal.ai/docs/documentation/model-apis/fal-cdn)
+and [Data Retention & Storage](https://fal.ai/docs/documentation/model-apis/media-expiration)
+docs define upload and retention expectations. See [Reference Sources](reference-sources.md)
+for peer storage APIs used for parity checks.
+
 ## Default Behavior
 
 The default upload path is the modern Fal CDN chain:

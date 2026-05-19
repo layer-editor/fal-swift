@@ -1,6 +1,6 @@
 # fal API Parity Audit
 
-This is the living parity matrix for `FalClient` against current fal model API docs and the Python, JavaScript, Java/Kotlin, and Dart clients checked on 2026-05-18.
+This is the living parity matrix for `FalClient` against current fal model API docs and the Python, JavaScript, Java/Kotlin, and Dart clients checked on 2026-05-18. Re-check [Reference Sources](../reference-sources.md) before treating this audit as current.
 
 ## Summary
 
@@ -153,8 +153,5 @@ Decision:
 
 ## References
 
-- [fal async queue docs](https://fal.ai/docs/documentation/model-apis/inference/queue)
-- [fal streaming docs](https://fal.ai/docs/documentation/model-apis/inference/streaming)
-- [fal realtime docs](https://fal.ai/docs/documentation/model-apis/inference/real-time)
-- [fal platform headers](https://fal.ai/docs/documentation/model-apis/common-parameters)
-- Peer source checked locally under `/tmp/fal-audit*` during the 2026-05-18 audit.
+- [Canonical Fal and peer package sources](../reference-sources.md)
+- Peer source was checked locally under `/tmp/fal-audit*` during the 2026-05-18 audit.

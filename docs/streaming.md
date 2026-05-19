@@ -2,6 +2,10 @@
 
 Direct streaming uses a model's `fal.run` server-sent events endpoint. It is not queue-backed, so queue priority, queue retry behavior, and queue status polling do not apply.
 
+Canonical references: Fal's [Streaming Inference](https://fal.ai/docs/documentation/model-apis/inference/streaming)
+docs define the intended model `/stream` behavior. The JavaScript streaming
+client is the closest peer package for API shape; see [Reference Sources](reference-sources.md).
+
 ## Payload Events
 
 ```swift

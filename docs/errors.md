@@ -2,6 +2,11 @@
 
 Public APIs throw `FalError`.
 
+Canonical references: Fal's [Model Errors](https://fal.ai/docs/documentation/model-apis/errors)
+and [Request Error Types](https://fal.ai/docs/documentation/model-apis/request-errors)
+docs are the source of truth for platform error meaning. See
+[Reference Sources](reference-sources.md) for peer client references.
+
 ```swift
 do {
     let result = try await fal.subscribe(to: "fal-ai/flux/dev", input: input)

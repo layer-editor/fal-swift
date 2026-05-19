@@ -4,6 +4,9 @@ Status: legacy camera/realtime demo.
 
 This sample compiles and demonstrates an older realtime camera pipeline, but it is not a modern reference implementation. It still uses older camera, image rendering, and observable-object patterns that should be rewritten before production use.
 
+Canonical references: Fal's realtime docs and peer realtime client are linked
+from [Reference Sources](../../../docs/reference-sources.md).
+
 ## Setup
 
 The sample defaults to:

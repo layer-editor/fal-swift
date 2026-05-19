@@ -2,6 +2,10 @@
 
 Sample apps are lightweight references for package APIs. They are not production app architecture and should not be copied into production without app-specific auth, state, and error handling.
 
+For current Fal setup, proxy, queue, and realtime behavior, cross-check the
+package [Reference Sources](../../docs/reference-sources.md) before treating a
+sample as current.
+
 All samples default to a local proxy:
 
 ```swift

@@ -2,6 +2,11 @@
 
 This fork is maintained for practical Apple-platform app use. Keep changes small, tested, and aligned with the existing package shape.
 
+Before changing Fal request lifecycle, queue, streaming, realtime, storage,
+model catalog, or error behavior, check [Reference Sources](docs/reference-sources.md)
+and note any intentional divergence from Fal docs or peer clients in the
+relevant feature doc.
+
 ## Setup
 
 ```bash

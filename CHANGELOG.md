@@ -11,3 +11,4 @@
 - Modernized storage uploads for Fal CDN v3, direct `fal.media`, multipart uploads, lifecycle headers, custom file names, fallback sequencing, and proxy-aware credential protection.
 - Added safe async Fal image loading helpers and deprecated synchronous remote byte loading.
 - Updated package release metadata, CI test execution, user-facing docs, and sample status notes.
+- Added canonical Fal documentation and peer-package reference links to reduce docs/API drift.

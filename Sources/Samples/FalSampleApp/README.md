@@ -4,6 +4,9 @@ Status: maintained as a small queue API reference.
 
 This sample shows a simple SwiftUI app that submits a model request through `fal.subscribe`, observes queue logs, and renders the returned image URL.
 
+Canonical references: Fal's queue docs and peer clients are linked from
+[Reference Sources](../../../docs/reference-sources.md).
+
 ## Setup
 
 The sample defaults to:

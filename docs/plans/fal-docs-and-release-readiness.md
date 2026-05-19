@@ -2,6 +2,8 @@
 
 This document tracks user-facing documentation, samples, package metadata, and CI work needed to make the package feel maintained.
 
+Use [Reference Sources](../reference-sources.md) as the canonical source list for docs updates. Feature docs should link to Fal's current docs and avoid copying large sections that can drift.
+
 ## README
 
 Completed fixes:
@@ -62,6 +64,7 @@ Deferred:
 
 Recommended docs:
 
+- `docs/reference-sources.md`: canonical Fal docs and peer packages referenced by this fork. Created.
 - `docs/authentication-and-proxy.md`: API key safety, proxy, bearer/token usage. Created.
 - `docs/queue.md`: submit, status, result, cancel, subscribe, status streaming. Created.
 - `docs/streaming.md`: direct SSE stream endpoints. Created.
@@ -86,6 +89,5 @@ DocC can come later. Markdown is easier to maintain while the API is still movin
 
 ## References
 
-- [fal client setup docs](https://fal.ai/docs/documentation/model-apis/inference/client-setup)
-- [fal proxy setup docs](https://fal.ai/docs/documentation/model-apis/inference/proxy-setup)
+- [Canonical Fal and peer package sources](../reference-sources.md)
 - [Swift Package Index entry](https://swiftpackageindex.com/fal-ai/fal-swift)
