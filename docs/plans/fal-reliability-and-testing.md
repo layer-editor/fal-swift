@@ -28,13 +28,12 @@ Recently added request-option coverage:
 - Storage upload options for generated/default file names, sanitized custom file names, uploaded-file lifecycle headers on initiate, and clean presigned PUT headers/body.
 - Object lifecycle durations are rejected before request construction when they are non-finite or not greater than zero.
 
-Remaining gaps:
+Remaining gaps and decisions:
 
 - Public transport injection for downstream package tests; the current seam is intentionally internal.
 - 422 validation payload message behavior for structured `detail` arrays.
-- Fake WebSocket/session boundary tests around realtime open/receive/close behavior.
 - Storage upload host trust policy beyond client-side URL rejection, especially DNS names that resolve to private IPs.
-- Realtime WebSocket lifecycle tests with a fake socket/session boundary.
+- Public retry knobs are intentionally deferred until a concrete caller need appears. Current retry behavior remains fixed and internal.
 
 ## Test Infrastructure First
 

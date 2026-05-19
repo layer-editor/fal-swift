@@ -57,7 +57,7 @@ extension UIImage {
     }
 
     func correctImageOrientation() -> UIImage? {
-        guard let cgImage else { return nil }
+        guard cgImage != nil else { return nil }
 
         switch imageOrientation {
         case .up:

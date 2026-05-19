@@ -1,4 +1,5 @@
 import FalClient
+import Observation
 import SwiftUI
 
 struct TurboInput: Encodable {
@@ -22,40 +23,54 @@ struct TurboResponse: Decodable {
 }
 
 @MainActor
-class LiveImage: ObservableObject {
-    @Published var currentImage: Data?
+@Observable
+final class LiveImage {
+    var currentImage: Data?
 
     private var connection: TypedRealtimeConnection<TurboInput>?
     private var imageLoadTask: Task<Void, Never>?
 
     init() {
+        ensureConnection()
+    }
+
+    func ensureConnection() {
+        guard connection == nil else {
+            return
+        }
         connection = try? fal.realtime.connect(
             to: "fal-ai/fast-turbo-diffusion/image-to-image",
             connectionKey: "PencilKitDemo",
             throttleInterval: .never
         ) { (result: Result<TurboResponse, Error>) in
-            if case let .success(data) = result,
-               let image = data.images.first
-            {
-                Task { [weak self] in
-                    await self?.load(image)
-                }
-            }
-            if case let .failure(error) = result {
-                print("-------------- Error")
-                print(error)
+            Task { @MainActor [weak self] in
+                self?.handle(result)
             }
         }
     }
 
-    deinit {
+    func close() {
         imageLoadTask?.cancel()
+        imageLoadTask = nil
         connection?.close()
+        connection = nil
+    }
+
+    private func handle(_ result: Result<TurboResponse, Error>) {
+        if case let .success(data) = result,
+           let image = data.images.first
+        {
+            load(image)
+        }
+        if case let .failure(error) = result {
+            print("-------------- Error")
+            print(error)
+        }
     }
 
     private func load(_ image: FalImage) {
         imageLoadTask?.cancel()
-        imageLoadTask = Task { [weak self] in
+        imageLoadTask = Task { @MainActor [weak self] in
             do {
                 let imageData = try await image.loadData()
                 try Task.checkCancellation()
@@ -69,6 +84,7 @@ class LiveImage: ObservableObject {
     }
 
     func generate(prompt: String, drawing: Data) throws {
+        ensureConnection()
         if let connection {
             try connection.send(TurboInput(
                 prompt: prompt,

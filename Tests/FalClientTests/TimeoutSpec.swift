@@ -1,100 +1,92 @@
 @testable import FalClient
 import Dispatch
 import Foundation
-import Nimble
-import Quick
+import XCTest
 
-class TimeoutSpec: QuickSpec {
-    override static func spec() {
-        // MARK: - DispatchTimeInterval.milliseconds
+final class TimeoutSpec: XCTestCase {
+    func testDispatchTimeIntervalConvertsSecondsToMilliseconds() {
+        XCTAssertEqual(DispatchTimeInterval.seconds(1).milliseconds, 1_000)
+        XCTAssertEqual(DispatchTimeInterval.seconds(5).milliseconds, 5_000)
+        XCTAssertEqual(DispatchTimeInterval.seconds(60).milliseconds, 60_000)
+    }
 
-        describe("DispatchTimeInterval.milliseconds") {
-            it("should convert seconds to milliseconds") {
-                expect(DispatchTimeInterval.seconds(1).milliseconds).to(equal(1000))
-                expect(DispatchTimeInterval.seconds(5).milliseconds).to(equal(5000))
-                expect(DispatchTimeInterval.seconds(60).milliseconds).to(equal(60000))
-            }
+    func testDispatchTimeIntervalReturnsMillisecondsAsIs() {
+        XCTAssertEqual(DispatchTimeInterval.milliseconds(500).milliseconds, 500)
+        XCTAssertEqual(DispatchTimeInterval.milliseconds(1_500).milliseconds, 1_500)
+    }
 
-            it("should return milliseconds as-is") {
-                expect(DispatchTimeInterval.milliseconds(500).milliseconds).to(equal(500))
-                expect(DispatchTimeInterval.milliseconds(1500).milliseconds).to(equal(1500))
-            }
+    func testDispatchTimeIntervalConvertsMicrosecondsToMilliseconds() {
+        XCTAssertEqual(DispatchTimeInterval.microseconds(1_000).milliseconds, 1)
+        XCTAssertEqual(DispatchTimeInterval.microseconds(5_000).milliseconds, 5)
+    }
 
-            it("should convert microseconds to milliseconds") {
-                expect(DispatchTimeInterval.microseconds(1000).milliseconds).to(equal(1))
-                expect(DispatchTimeInterval.microseconds(5000).milliseconds).to(equal(5))
-            }
+    func testDispatchTimeIntervalConvertsNanosecondsToMilliseconds() {
+        XCTAssertEqual(DispatchTimeInterval.nanoseconds(1_000_000).milliseconds, 1)
+        XCTAssertEqual(DispatchTimeInterval.nanoseconds(5_000_000).milliseconds, 5)
+    }
 
-            it("should convert nanoseconds to milliseconds") {
-                expect(DispatchTimeInterval.nanoseconds(1_000_000).milliseconds).to(equal(1))
-                expect(DispatchTimeInterval.nanoseconds(5_000_000).milliseconds).to(equal(5))
-            }
+    func testDispatchTimeIntervalNeverMeansNoDeadline() {
+        XCTAssertEqual(DispatchTimeInterval.never.milliseconds, Int.max)
+    }
 
-            it("should return Int.max for .never (not 0)") {
-                // This is the critical fix - .never should mean "wait forever", not "timeout immediately"
-                expect(DispatchTimeInterval.never.milliseconds).to(equal(Int.max))
-            }
+    func testDispatchTimeIntervalConvertsMinutesHelper() {
+        XCTAssertEqual(DispatchTimeInterval.minutes(1).milliseconds, 60_000)
+        XCTAssertEqual(DispatchTimeInterval.minutes(3).milliseconds, 180_000)
+    }
 
-            it("should convert minutes helper correctly") {
-                expect(DispatchTimeInterval.minutes(1).milliseconds).to(equal(60_000))
-                expect(DispatchTimeInterval.minutes(3).milliseconds).to(equal(180_000))
-            }
-        }
+    func testRunOptionsDefaultTimeout() {
+        let options = RunOptions()
 
-        // MARK: - RunOptions
+        XCTAssertEqual(options.timeoutInterval, 60)
+    }
 
-        describe("RunOptions") {
-            it("should have a default timeout of 60 seconds") {
-                let options = RunOptions()
-                expect(options.timeoutInterval).to(equal(60))
-            }
+    func testRunOptionsAllowsCustomTimeout() {
+        let options = RunOptions(timeoutInterval: 120)
 
-            it("should allow custom timeout via init") {
-                let options = RunOptions(timeoutInterval: 120)
-                expect(options.timeoutInterval).to(equal(120))
-            }
+        XCTAssertEqual(options.timeoutInterval, 120)
+    }
 
-            it("should preserve all parameters in init") {
-                let options = RunOptions(path: "/custom", httpMethod: .put, timeoutInterval: 30)
-                expect(options.path).to(equal("/custom"))
-                expect(options.httpMethod).to(equal(HttpMethod.put))
-                expect(options.timeoutInterval).to(equal(30))
-            }
+    func testRunOptionsPreservesInitializerParameters() {
+        let options = RunOptions(path: "/custom", httpMethod: .put, timeoutInterval: 30)
 
-            it("should use default timeout with withMethod factory") {
-                let options = RunOptions.withMethod(.get)
-                expect(options.httpMethod).to(equal(HttpMethod.get))
-                expect(options.timeoutInterval).to(equal(60))
-            }
+        XCTAssertEqual(options.path, "/custom")
+        XCTAssertEqual(options.httpMethod, .put)
+        XCTAssertEqual(options.timeoutInterval, 30)
+    }
 
-            it("should set custom timeout with withTimeout factory") {
-                let options = RunOptions.withTimeout(90)
-                expect(options.timeoutInterval).to(equal(90))
-                expect(options.httpMethod).to(equal(HttpMethod.post))
-            }
+    func testRunOptionsWithMethodUsesDefaultTimeout() {
+        let options = RunOptions.withMethod(.get)
 
-            it("should allow method override with withTimeout factory") {
-                let options = RunOptions.withTimeout(45, method: .delete)
-                expect(options.timeoutInterval).to(equal(45))
-                expect(options.httpMethod).to(equal(HttpMethod.delete))
-            }
+        XCTAssertEqual(options.httpMethod, .get)
+        XCTAssertEqual(options.timeoutInterval, 60)
+    }
 
-            it("should use default timeout with route factory") {
-                let options = RunOptions.route("/status", withMethod: .get)
-                expect(options.path).to(equal("/status"))
-                expect(options.httpMethod).to(equal(HttpMethod.get))
-                expect(options.timeoutInterval).to(equal(60))
-            }
-        }
+    func testRunOptionsWithTimeoutUsesPostByDefault() {
+        let options = RunOptions.withTimeout(90)
 
-        // MARK: - URLRequest timeout integration
+        XCTAssertEqual(options.timeoutInterval, 90)
+        XCTAssertEqual(options.httpMethod, .post)
+    }
 
-        describe("URLRequest timeout") {
-            it("should apply timeout from RunOptions") {
-                let options = RunOptions(timeoutInterval: 45)
-                let request = URLRequest(url: URL(string: "https://example.com")!, timeoutInterval: options.timeoutInterval)
-                expect(request.timeoutInterval).to(equal(45))
-            }
-        }
+    func testRunOptionsWithTimeoutAllowsMethodOverride() {
+        let options = RunOptions.withTimeout(45, method: .delete)
+
+        XCTAssertEqual(options.timeoutInterval, 45)
+        XCTAssertEqual(options.httpMethod, .delete)
+    }
+
+    func testRunOptionsRouteUsesDefaultTimeout() {
+        let options = RunOptions.route("/status", withMethod: .get)
+
+        XCTAssertEqual(options.path, "/status")
+        XCTAssertEqual(options.httpMethod, .get)
+        XCTAssertEqual(options.timeoutInterval, 60)
+    }
+
+    func testURLRequestAppliesRunOptionsTimeout() {
+        let options = RunOptions(timeoutInterval: 45)
+        let request = URLRequest(url: URL(string: "https://example.com")!, timeoutInterval: options.timeoutInterval)
+
+        XCTAssertEqual(request.timeoutInterval, 45)
     }
 }

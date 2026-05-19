@@ -22,7 +22,7 @@
 - [x] Implemented direct model `/stream` support.
 - [x] Hardened storage uploads and typed binary handling.
 - [x] Added storage upload options for file names and uploaded-file lifecycle.
-- [ ] Updated README, sample docs, CI, and release metadata.
+- [x] Updated README, sample docs, CI, and release metadata.
 
 ## Audit Baseline
 
@@ -157,13 +157,13 @@ External references checked:
 
 ## P2: Ergonomics, Docs, and Release Quality
 
-- [ ] Refresh `README.md`.
+- [x] Refresh `README.md`.
   - Use current model API language.
   - Show `Payload` and `Codable` results accurately.
   - Warn clearly against shipping API keys in client apps.
   - Replace unsafe realtime examples.
 
-- [ ] Add DocC or markdown guides.
+- [x] Add DocC or markdown guides.
   - Setup and auth/proxy.
   - Queue submit/subscribe/cancel.
   - Streaming.
@@ -171,24 +171,24 @@ External references checked:
   - Storage uploads. `docs/storage.md` now documents the modern default CDN chain, multipart behavior, legacy presigned option, lifecycle settings, and fallback tradeoff.
   - Error handling.
 
-- [ ] Update sample apps or mark them as legacy.
+- [x] Update sample apps or mark them as legacy.
   - Add per-sample README files with proxy setup and expected behavior.
   - Remove unsafe force unwraps and blocking image loads.
   - Move SwiftUI samples toward current observation/concurrency patterns.
 
-- [ ] Fix release metadata.
+- [x] Fix release metadata.
   - Align `swift-tools-version` with syntax and CI.
   - Enable targeted CI tests.
-  - Stop hardcoding user agent version `0.1.0`.
+  - Removed stale hardcoded user agent version `0.1.0`.
   - Add `CHANGELOG.md` and `CONTRIBUTING.md`.
 
 ## Current Remaining Work
 
-High-leverage implementation work that remains after the completed queue, streaming, endpoint parsing, request-option, and first storage modernization slices:
+High-leverage implementation work that remains after the completed queue, streaming, endpoint parsing, request-option, storage modernization, and release-readiness slices:
 
-- Client reliability: decide whether any future retry knobs should be public configuration.
-- Realtime follow-up: refresh README/sample guidance and decide whether a public custom token-provider hook is useful for this fork.
-- Release readiness: README refresh, markdown guides, sample cleanup/legacy labeling, CI, changelog, contributing guide, and user-agent/package version cleanup.
+- Client reliability: public retry knobs are intentionally deferred until OpenStudio has a concrete caller need.
+- Realtime follow-up: public custom token providers are intentionally deferred; current guidance favors proxy or short-lived bearer-token setup.
+- Release readiness: sample app CI builds remain deferred because simulator/signing availability is brittle. The library test/build CI path is enabled.
 
 ## Drill-Down Docs
 
@@ -220,6 +220,7 @@ High-leverage implementation work that remains after the completed queue, stream
 - 2026-05-18: Added direct Fal CDN v3 multipart storage upload support with automatic large-file thresholding, configurable chunk sizing, part ETag completion payloads, and tests for chunk sequencing plus invalid option validation.
 - 2026-05-18: Added explicit direct `fal.media` storage upload support with bearer-secret auth, lifecycle/file-name headers, safe returned URL validation, and fallback sequencing from pre-body direct CDN v3 failures.
 - 2026-05-18: Promoted storage defaults to the modern Fal CDN chain: direct CDN v3 -> direct `fal.media` -> REST presigned, with `.presignedFalCDNV3` kept for explicit legacy REST-presigned uploads and proxy/credential-aware skipping of direct `fal.media`.
+- 2026-05-18: Completed the release-readiness pass: refreshed README and markdown guides, labeled samples, modernized the maintained sample edges, aligned Swift tools/CI, removed Quick/Nimble, added changelog/contributing docs, and documented the retry/token-provider deferrals.
 
 ## Non-Goals
 

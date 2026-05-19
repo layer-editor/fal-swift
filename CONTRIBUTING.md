@@ -1,0 +1,45 @@
+# Contributing
+
+This fork is maintained for our internal Apple-platform use first. Keep changes small, tested, and aligned with the existing package shape.
+
+## Setup
+
+```bash
+swift package resolve
+swift test
+swift build --target FalClient --configuration release
+```
+
+Do not run tests or examples with real Fal API keys unless the test is explicitly intended to hit live infrastructure.
+
+## Common Verification
+
+Use targeted tests while iterating:
+
+```bash
+swift test --filter StorageTests
+swift test --filter ClientRequestTests
+swift test --filter RealtimeConnectionPoolTests
+```
+
+Before committing shared package changes, run:
+
+```bash
+swift test
+swift build --target FalClient -Xswiftc -strict-concurrency=complete
+swift build --target FalClient --configuration release
+git diff --check
+```
+
+## Samples
+
+Sample apps under `Sources/Samples` are lightweight references. They are not release gates unless a change explicitly targets a sample. Prefer documenting sample status over broad sample rewrites.
+
+## Release Checklist
+
+- `swift test` passes locally and in CI.
+- `swift build --target FalClient --configuration release` passes.
+- README examples are checked manually or covered by tests.
+- Public API changes have migration notes in `CHANGELOG.md`.
+- Samples are updated or clearly labeled as legacy/reference-only.
+- User-agent product/version policy is reviewed before public tags.

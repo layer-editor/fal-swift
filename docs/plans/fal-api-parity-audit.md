@@ -4,7 +4,7 @@ This is the living parity matrix for `FalClient` against current fal model API d
 
 ## Summary
 
-The Swift client now covers the core model API workflows: direct `run`, queue-backed `subscribe`, manual queue `submit/status/response/cancel`, queue status streaming, direct model `/stream`, realtime WebSocket support, dynamic `Payload`, and `Codable` overloads. The remaining gaps are narrower: storage direct-CDN/fallback/multipart behavior, realtime docs/sample polish, release docs, sample cleanup, and CI/release metadata.
+The Swift client now covers the core model API workflows: direct `run`, queue-backed `subscribe`, manual queue `submit/status/response/cancel`, queue status streaming, direct model `/stream`, realtime WebSocket support, modern storage uploads, dynamic `Payload`, and `Codable` overloads. The remaining gaps are now mostly release polish and future product decisions, not backend API parity.
 
 ## Feature Matrix
 
@@ -18,10 +18,10 @@ The Swift client now covers the core model API workflows: direct `run`, queue-ba
 | `queue.cancel` | Present | Documented `PUT /requests/{request_id}/cancel` endpoint | Done |
 | `queue.streamStatus` | Present | Documented SSE endpoint implemented as `AsyncThrowingStream<QueueStatusDetail, Error>` | Done |
 | `stream` | Present | Official method for `/stream` SSE endpoints | Done |
-| realtime | Present, concurrency-hardened, current token endpoint, custom path overloads, and fake socket lifecycle tests | Still needs docs/sample refresh and a decision on whether to expose custom token providers | Mostly Done |
+| realtime | Present, concurrency-hardened, current token endpoint, custom path overloads, fake socket lifecycle tests, and docs/sample guidance | Custom token providers intentionally deferred until a product need appears | Done |
 | platform headers | Present | Server-side platform headers are modeled; client-side transient retry is implemented for queue status/result and storage PUT | Done |
 | namespaced endpoints | Present | Peer clients preserve namespace/path pieces | Done |
-| storage uploads | Improved | Initiates `fal-cdn-v3` uploads with file-name and lifecycle options; direct CDN, fallback, and multipart remain | P1/P2 |
+| storage uploads | Present | Defaults to direct CDN v3 with `fal.media` and REST presigned fallback, plus multipart, file-name, lifecycle, and proxy-aware fallback behavior | Done |
 
 ## Queue API Status
 
@@ -131,10 +131,9 @@ Implemented:
 - The connection pool key uses canonical endpoint identity so equivalent default paths reuse the same logical connection.
 - The WebSocket layer has an internal fakeable task factory boundary covered by tests for open, queued send flush, FIFO queued sends, receive errors, manual close, delegate close, and close-during-token-refresh.
 
-Still separate from this chunk:
+Decision:
 
-- Decide whether this fork should expose a public custom realtime token provider. The current implementation keeps token refresh internal and credential-based.
-- Refresh realtime README/sample guidance, including proxy/auth warnings for client apps.
+- Do not expose a public custom realtime token provider yet. The current implementation keeps token refresh internal and credential-based, and app credential protection should happen through proxy or short-lived bearer-token setup until OpenStudio has a concrete need.
 
 ## References
 

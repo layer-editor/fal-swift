@@ -22,6 +22,30 @@ final class ClientRequestTests: XCTestCase {
         super.tearDown()
     }
 
+    func testUserAgentDoesNotAdvertiseStalePackageVersion() async throws {
+        requestHandler = { request in
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: nil
+            )!
+            return HTTPTransportResponse(data: #"{"ok":true}"#.data(using: .utf8)!, response: response)
+        }
+        let client = TestRequestClient(config: ClientConfig(), httpTransport: transport)
+
+        _ = try await client.sendRequest(
+            to: "https://fal.run/fal-ai/test",
+            input: nil as Data?,
+            options: RunOptions.withMethod(.get)
+        )
+
+        let request = try XCTUnwrap(transport.requests.first)
+        let userAgent = try XCTUnwrap(request.value(forHTTPHeaderField: "user-agent"))
+        XCTAssertTrue(userAgent.hasPrefix("fal.ai/swift-client - "))
+        XCTAssertFalse(userAgent.contains("0.1.0"))
+    }
+
     func testProxyRequestsDoNotForwardFalKeyAuthorizationHeader() async throws {
         requestHandler = { request in
             let response = HTTPURLResponse(

@@ -2,9 +2,9 @@ import Kingfisher
 import SwiftUI
 
 struct ContentView: View {
-    @State var canvasView = CanvasView()
-    @State var drawingData: Data?
-    @ObservedObject var liveImage = LiveImage()
+    @State private var canvasView = CanvasView()
+    @State private var drawingData: Data?
+    @State private var liveImage = LiveImage()
 
     var body: some View {
         GeometryReader { geometry in
@@ -12,7 +12,7 @@ struct ContentView: View {
                 // Landscape
                 HStack {
                     DrawingCanvasView(canvasView: $canvasView, drawingData: $drawingData)
-                        .onChange(of: drawingData) { onDrawingChange() }
+                        .onChange(of: drawingData) { _, _ in onDrawingChange() }
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                     ImageViewContainer(imageData: liveImage.currentImage)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -23,12 +23,18 @@ struct ContentView: View {
                     ImageViewContainer(imageData: liveImage.currentImage)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                     DrawingCanvasView(canvasView: $canvasView, drawingData: $drawingData)
-                        .onChange(of: drawingData) { onDrawingChange() }
+                        .onChange(of: drawingData) { _, _ in onDrawingChange() }
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
         }
         .padding()
+        .onAppear {
+            liveImage.ensureConnection()
+        }
+        .onDisappear {
+            liveImage.close()
+        }
     }
 
     func onDrawingChange() {

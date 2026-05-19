@@ -136,9 +136,11 @@ extension Client {
 
     var userAgent: String {
         let osVersion = ProcessInfo.processInfo.operatingSystemVersionString
-        return "fal.ai/swift-client 0.1.0 - \(osVersion)"
+        return "\(falSwiftClientUserAgentProduct) - \(osVersion)"
     }
 }
+
+private let falSwiftClientUserAgentProduct = "fal.ai/swift-client"
 
 private actor ServerSentEventRequestStream {
     private let transport: HTTPTransport

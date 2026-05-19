@@ -4,96 +4,85 @@ This document tracks user-facing documentation, samples, package metadata, and C
 
 ## README
 
-Current issues:
+Completed fixes:
 
-- It frames fal as "serverless Python functions"; current docs position the client around fal model APIs and deployed endpoints.
-- It uses old example IDs such as `text-to-image`.
-- It suggests inline credentials too casually for an Apple client package.
-- It says untyped results are `[String: Any]`, but public APIs return `Payload`.
-- The realtime snippet uses unsafe patterns and undefined context.
+- README now frames the package around Fal model APIs.
+- Examples use current-style model IDs and `Payload`/`Codable` results.
+- Auth guidance warns against shipping long-lived Fal keys in Apple apps.
+- Realtime README guidance no longer uses unsafe blocking image loading snippets.
 
-Planned update:
+Current follow-up:
 
-- Use `fal-ai/flux/dev` or another current public model in examples.
-- Show `Payload` and `Codable` variants.
-- Add a clear auth section:
-  - Server/dev contexts may use `FAL_KEY` or explicit credentials.
-  - Client apps should use a server proxy or short-lived token flow.
-  - Do not ship permanent fal API keys inside iOS/macOS apps.
-- Link to dedicated auth/proxy and sample docs.
+- Keep examples checked as public API evolves.
 
 ## Package Metadata
 
+Completed fixes:
+
+- `Package.swift` now declares Swift tools 5.9, matching source syntax and CI.
+- Quick/Nimble were removed after converting the remaining specs to XCTest.
+- User agent no longer advertises stale package version `0.1.0`.
+
 Current issues:
 
-- `Package.swift` declares Swift tools 5.7, but source uses Swift 5.9 switch expression syntax.
-- CI config uses Swift 5.9 while package metadata says 5.7.
-- Quick/Nimble are heavy for the current small test surface.
-- User agent hardcodes `0.1.0`.
 - Platform matrix is broader than what CI/docs prove.
 
-Planned work:
+Deferred:
 
-- Decide whether to raise package tools to Swift 5.9+ or remove 5.9-only syntax.
-- Move tests to XCTest or Swift Testing when practical.
-- Generate user agent version from package/release metadata or centralize it in one constant.
 - Either test advertised platforms or document supported versus best-effort platforms.
 
 ## CI
 
-Current issues:
+Completed fixes:
 
-- `.github/workflows/build.yml` comments out `swift test`.
+- `.github/workflows/build.yml` runs `swift test` and release build for the library.
+
+Deferred:
+
 - Sample builds are commented out.
 
-Planned work:
-
-- Enable `swift test` for library changes.
 - Keep sample builds targeted and opt-in if simulator availability is brittle.
 - Add CI jobs only after samples are updated enough to be good references.
 
 ## Samples
 
-Current issues:
+Completed fixes:
 
-- Sample `fal.swift` files default to `http://localhost:3333/api/fal/proxy` without setup instructions.
-- Basic sample uses a short timeout and force unwraps media URLs.
-- Realtime and camera samples use older SwiftUI observation patterns.
-- Camera sample uses deprecated image rendering APIs and manual DispatchQueue paths.
-- Camera sample Xcode project hardcodes a development team.
+- Added `Sources/Samples/README.md` plus per-sample README files with proxy setup and status.
+- Basic sample uses a more realistic queue timeout and avoids force-unwrapping image URLs.
+- Realtime sample uses `@Observable`/`@State` and current `onChange` syntax.
+- Removed commented direct key-pair snippets from sample `fal.swift` files.
+- Camera sample has no hardcoded development team and is clearly labeled legacy.
 
-Planned work:
+Deferred:
 
-- Add `Sources/Samples/*/README.md` files.
-- Explain proxy setup and credentials for each sample.
-- Update unsafe force unwraps and blocking loads.
-- Modernize SwiftUI sample state only where the sample is actively kept.
-- If a sample is not maintained, mark it clearly as legacy instead of pretending it is a reference implementation.
+- Camera sample still uses older camera/rendering/concurrency patterns. Rewrite only if the sample becomes an active reference again.
 
 ## New Living Docs
 
 Recommended docs:
 
-- `docs/authentication-and-proxy.md`: API key safety, proxy, bearer/token usage.
-- `docs/queue.md`: submit, status, result, cancel, subscribe, status streaming.
-- `docs/streaming.md`: direct SSE stream endpoints.
+- `docs/authentication-and-proxy.md`: API key safety, proxy, bearer/token usage. Created.
+- `docs/queue.md`: submit, status, result, cancel, subscribe, status streaming. Created.
+- `docs/streaming.md`: direct SSE stream endpoints. Created.
+- `docs/realtime.md`: realtime connections, token-provider decision, sample status. Created.
 - `docs/storage.md`: uploads, content types, lifecycle settings. Created with the current v3-first default chain and fallback behavior.
-- `docs/errors.md`: public error metadata and retry guidance.
-- `CONTRIBUTING.md`: setup, targeted test commands, sample build commands, release checklist.
-- `CHANGELOG.md`: start with unreleased section and note this fork's local fixes.
+- `docs/errors.md`: public error metadata and retry guidance. Created.
+- `CONTRIBUTING.md`: setup, targeted test commands, sample build commands, release checklist. Created.
+- `CHANGELOG.md`: start with unreleased section and note this fork's local fixes. Created.
 
 DocC can come later. Markdown is easier to maintain while the API is still moving.
 
 ## Release Checklist
 
-- [ ] `swift test` passes locally and in CI.
-- [ ] `swift build --target FalClient --configuration release` passes.
-- [ ] README examples compile or are covered by snippet tests/manual checks.
-- [ ] Public API changes have migration notes.
-- [ ] New queue/request behavior has tests with no live credentials.
-- [ ] Samples are either updated or clearly labeled legacy.
-- [ ] Changelog has user-facing entries.
-- [ ] Version in docs, package references, and user agent is consistent.
+- [x] `swift test` passes locally and is enabled in CI.
+- [x] `swift build --target FalClient --configuration release` passes locally and remains enabled in CI.
+- [x] README examples compile or are covered by snippet tests/manual checks.
+- [x] Public API changes have migration notes.
+- [x] New queue/request behavior has tests with no live credentials.
+- [x] Samples are either updated or clearly labeled legacy.
+- [x] Changelog has user-facing entries.
+- [x] Version in docs, package references, and user agent is consistent.
 
 ## References
 
