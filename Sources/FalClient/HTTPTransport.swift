@@ -15,7 +15,29 @@ struct HTTPTransportEventStream {
 
 protocol HTTPTransport: Sendable {
     func data(for request: URLRequest) async throws -> HTTPTransportResponse
+    func data(
+        for request: URLRequest,
+        validatingRedirectsWith validator: @Sendable @escaping (URL) -> Bool
+    ) async throws -> HTTPTransportResponse
     func serverSentEvents(for request: URLRequest) async throws -> HTTPTransportEventStream
+}
+
+extension HTTPTransport {
+    // Compatibility fallback for simple fake transports. Real network transports
+    // used for storage uploads should override this method and reject unsafe
+    // redirects before following them.
+    func data(
+        for request: URLRequest,
+        validatingRedirectsWith validator: @Sendable @escaping (URL) -> Bool
+    ) async throws -> HTTPTransportResponse {
+        let transportResponse = try await data(for: request)
+        if let responseURL = transportResponse.response.url,
+           !validator(responseURL)
+        {
+            throw FalError.invalidUrl(url: responseURL.absoluteString.redactedURLForDescription)
+        }
+        return transportResponse
+    }
 }
 
 protocol HTTPTransportProviding {
@@ -25,13 +47,36 @@ protocol HTTPTransportProviding {
 struct URLSessionHTTPTransport: HTTPTransport {
     static let shared = URLSessionHTTPTransport()
 
+    private let session: URLSession
+
+    init(session: URLSession = .shared) {
+        self.session = session
+    }
+
     func data(for request: URLRequest) async throws -> HTTPTransportResponse {
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await session.data(for: request)
+        return HTTPTransportResponse(data: data, response: response)
+    }
+
+    func data(
+        for request: URLRequest,
+        validatingRedirectsWith validator: @Sendable @escaping (URL) -> Bool
+    ) async throws -> HTTPTransportResponse {
+        let delegate = RedirectValidatingURLSessionDelegate(validator: validator)
+        let (data, response) = try await session.data(for: request, delegate: delegate)
+        if let rejectedURL = delegate.rejectedRedirectURL {
+            throw FalError.invalidUrl(url: rejectedURL.absoluteString.redactedURLForDescription)
+        }
+        if let responseURL = response.url,
+           !validator(responseURL)
+        {
+            throw FalError.invalidUrl(url: responseURL.absoluteString.redactedURLForDescription)
+        }
         return HTTPTransportResponse(data: data, response: response)
     }
 
     func serverSentEvents(for request: URLRequest) async throws -> HTTPTransportEventStream {
-        let (bytes, response) = try await URLSession.shared.bytes(for: request)
+        let (bytes, response) = try await session.bytes(for: request)
         if let httpResponse = response as? HTTPURLResponse, !httpResponse.isSuccessful {
             var errorData = Data()
             for try await byte in bytes {
@@ -49,6 +94,39 @@ struct URLSessionHTTPTransport: HTTPTransport {
 
         let events = serverSentEventStream(from: bytes.lines)
         return HTTPTransportEventStream(events: events, response: response, errorData: Data())
+    }
+}
+
+private final class RedirectValidatingURLSessionDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    private let validator: @Sendable (URL) -> Bool
+    private let lock = NSLock()
+    private var _rejectedRedirectURL: URL?
+
+    init(validator: @escaping @Sendable (URL) -> Bool) {
+        self.validator = validator
+    }
+
+    var rejectedRedirectURL: URL? {
+        lock.withLock {
+            _rejectedRedirectURL
+        }
+    }
+
+    func urlSession(
+        _: URLSession,
+        task _: URLSessionTask,
+        willPerformHTTPRedirection _: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping @Sendable (URLRequest?) -> Void
+    ) {
+        guard let url = request.url, validator(url) else {
+            lock.withLock {
+                _rejectedRedirectURL = request.url
+            }
+            completionHandler(nil)
+            return
+        }
+        completionHandler(request)
     }
 }
 

@@ -227,7 +227,7 @@ final class StorageTests: XCTestCase {
         try await assertUploadThrowsInvalidUrl(
             fileUrl: "https://fal.media/file.png",
             uploadUrl: "not a url",
-            expectedInvalidUrl: "not a url"
+            expectedInvalidUrl: "not%20a%20url"
         )
     }
 
@@ -251,7 +251,7 @@ final class StorageTests: XCTestCase {
         try await assertUploadThrowsInvalidUrl(
             fileUrl: "https://fal.media/file.png",
             uploadUrl: "https://127.0.0.1./upload?signature=secret",
-            expectedInvalidUrl: "https://127.0.0.1./upload?signature=secret"
+            expectedInvalidUrl: "https://127.0.0.1./upload"
         )
     }
 
@@ -268,6 +268,22 @@ final class StorageTests: XCTestCase {
             fileUrl: "https://fal.media/file.png",
             uploadUrl: "https://[::ffff:127.0.0.1]/upload",
             expectedInvalidUrl: "https://[::ffff:127.0.0.1]/upload"
+        )
+    }
+
+    func testUploadThrowsInvalidUrlForHexIPv4MappedIPv6LoopbackUploadUrl() async throws {
+        try await assertUploadThrowsInvalidUrl(
+            fileUrl: "https://fal.media/file.png",
+            uploadUrl: "https://[::ffff:7f00:1]/upload",
+            expectedInvalidUrl: "https://[::ffff:7f00:1]/upload"
+        )
+    }
+
+    func testUploadThrowsInvalidUrlForIPv4CompatibleIPv6LoopbackUploadUrl() async throws {
+        try await assertUploadThrowsInvalidUrl(
+            fileUrl: "https://fal.media/file.png",
+            uploadUrl: "https://[::127.0.0.1]/upload",
+            expectedInvalidUrl: "https://[::127.0.0.1]/upload"
         )
     }
 
@@ -297,10 +313,49 @@ final class StorageTests: XCTestCase {
 
     func testUploadThrowsInvalidUrlForInvalidFileUrlBeforePut() async throws {
         try await assertUploadThrowsInvalidUrl(
-            fileUrl: "https://localhost/file.png",
+            fileUrl: "https://localhost/file.png?signature=secret",
             uploadUrl: "https://storage.googleapis.com/upload",
             expectedInvalidUrl: "https://localhost/file.png"
         )
+    }
+
+    func testUploadThrowsInvalidUrlWhenFinalUploadResponseUrlIsUnsafe() async throws {
+        let transport = RecordingHTTPTransport { request in
+            if request.url?.host == "rest.fal.ai" {
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!
+                let data = """
+                {
+                  "file_url": "https://fal.media/file.png",
+                  "upload_url": "https://storage.googleapis.com/upload"
+                }
+                """.data(using: .utf8)!
+                return HTTPTransportResponse(data: data, response: response)
+            }
+
+            let redirectedURL = URL(string: "http://127.0.0.1/upload?signature=secret")!
+            let response = HTTPURLResponse(
+                url: redirectedURL,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: nil
+            )!
+            return HTTPTransportResponse(data: Data(), response: response)
+        }
+        let storage = StorageClient(client: StorageTestClient(httpTransport: transport))
+
+        do {
+            _ = try await storage.upload(data: Data("image".utf8), ofType: .imagePng)
+            XCTFail("Expected upload to reject unsafe final response URL")
+        } catch FalError.invalidUrl(let url) {
+            XCTAssertEqual(url, "http://127.0.0.1/upload")
+        }
+
+        XCTAssertEqual(transport.requests.count, 2)
     }
 
     private func assertUploadThrowsInvalidUrl(

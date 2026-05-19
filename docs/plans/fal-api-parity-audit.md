@@ -105,13 +105,16 @@ Implemented:
 - `rest.fal.ai` initiate endpoint with `storage_type=fal-cdn-v3`.
 - Lifecycle duration validation before request construction.
 - Clean presigned PUT requests without Fal auth or lifecycle headers.
+- Invalid storage URL associated values redact signed query strings and fragments before being thrown.
+- Built-in URLSession storage PUTs reject unsafe redirects before following them, and fake/custom transport responses are still final-URL validated.
+- Numeric IPv4 forms and IPv6 loopback/private aliases, including IPv4-mapped and IPv4-compatible forms, are rejected.
 
 Still separate from this small chunk:
 
 - Direct `v3.fal.media` upload path with CDN auth token management.
 - Fallback repositories.
 - Multipart upload for large files.
-- Redirect validation and stricter invalid presigned URL redaction.
+- DNS rebinding/private-DNS mitigation for public-looking storage hostnames, likely through an allowlist or preflight resolution policy.
 
 ## References
 

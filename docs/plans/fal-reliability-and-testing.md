@@ -33,7 +33,7 @@ Remaining gaps:
 - Public transport injection for downstream package tests; the current seam is intentionally internal.
 - 422 validation payload message behavior for structured `detail` arrays.
 - Fake WebSocket/session boundary tests around realtime open/receive/close behavior.
-- Storage upload host trust policy beyond client-side URL rejection, especially DNS names that resolve to private IPs, presigned URL redirects, and raw invalid URL associated values that may contain signed query parameters.
+- Storage upload host trust policy beyond client-side URL rejection, especially DNS names that resolve to private IPs.
 - Realtime WebSocket lifecycle tests with a fake socket/session boundary.
 
 ## Test Infrastructure First
@@ -220,6 +220,10 @@ Cases:
 - Upload initiation uses `rest.fal.ai` with `storage_type=fal-cdn-v3`, generated file names by default, custom sanitized file names when requested, and upload lifecycle headers only on the initiate request.
 - Presigned PUT requests keep the original body, content type, content length, and do not receive Fal authorization or lifecycle headers.
 - Invalid object lifecycle durations throw before any request is sent.
+- Invalid storage URL associated values redact signed query strings and fragments before being thrown.
+- Built-in URLSession storage PUTs reject unsafe redirects before following them; fake/custom transports still get final response URL validation as a compatibility fallback.
+- Safe 307 storage redirects are allowed by the URLSession transport while preserving PUT method and content type.
+- IPv4-compatible and hex IPv4-mapped IPv6 loopback aliases are rejected.
 - Typed `Encodable` containing `Data` throws a documented unsupported-input error before sending base64 JSON accidentally. Covered for typed `run` and typed `queue.submit`, including custom `encode(to:)` implementations.
 - `Payload.data` is rejected for GET queue requests before query serialization.
 - POST payload auto-upload is exercised through the `Storage` protocol extension so custom storage conformers are covered.

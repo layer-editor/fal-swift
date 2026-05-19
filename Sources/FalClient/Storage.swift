@@ -167,10 +167,10 @@ struct StorageClient: Storage {
     func upload(data: Data, ofType type: FileType, options: StorageUploadOptions) async throws -> String {
         let uploadUrl = try await initiateUpload(data: data, ofType: type, options: options)
         guard let url = URL.safeExternalHTTPSURL(from: uploadUrl.uploadUrl) else {
-            throw FalError.invalidUrl(url: uploadUrl.uploadUrl)
+            throw FalError.invalidUrl(url: uploadUrl.uploadUrl.redactedURLForDescription)
         }
         guard URL.safeExternalHTTPSURL(from: uploadUrl.fileUrl) != nil else {
-            throw FalError.invalidUrl(url: uploadUrl.fileUrl)
+            throw FalError.invalidUrl(url: uploadUrl.fileUrl.redactedURLForDescription)
         }
 
         // Upload the file to the upload URL.
@@ -182,7 +182,10 @@ struct StorageClient: Storage {
         request.setValue(type.mimeType, forHTTPHeaderField: "Content-Type")
         request.setValue(String(data.count), forHTTPHeaderField: "Content-Length")
 
-        let transportResponse = try await client.resolvedHTTPTransport.data(for: request)
+        let transportResponse = try await client.resolvedHTTPTransport.data(
+            for: request,
+            validatingRedirectsWith: { URL.safeExternalHTTPSURL($0) }
+        )
         try client.checkResponseStatus(for: transportResponse.response, withData: transportResponse.data)
 
         return uploadUrl.fileUrl
@@ -221,19 +224,27 @@ private extension Character {
     }
 }
 
-private extension URL {
+extension URL {
     static func safeExternalHTTPSURL(from string: String) -> URL? {
         guard let url = URL(string: string),
-              url.scheme?.lowercased() == "https",
+              safeExternalHTTPSURL(url)
+        else {
+            return nil
+        }
+        return url
+    }
+
+    static func safeExternalHTTPSURL(_ url: URL) -> Bool {
+        guard url.scheme?.lowercased() == "https",
               url.user == nil,
               url.password == nil,
               let host = url.host,
               !host.isEmpty,
               !host.isLocalOrPrivateHost
         else {
-            return nil
+            return false
         }
-        return url
+        return true
     }
 }
 
@@ -256,26 +267,11 @@ private extension String {
         if host == "localhost" || host.hasSuffix(".localhost") {
             return true
         }
-        if let mappedIPv4Host = host.ipv4MappedIPv6Host {
-            return mappedIPv4Host.isLocalOrPrivateHost
-        }
-        if host.contains(":") {
-            if host == "::1" || host == "0:0:0:0:0:0:0:1" {
-                return true
-            }
-            if host.hasPrefix("fe80:") || host.hasPrefix("fc") || host.hasPrefix("fd") || host.hasPrefix("ff") {
-                return true
-            }
+        if let ipv6Bytes = host.ipv6AddressBytes {
+            return ipv6Bytes.isLocalOrPrivateIPv6Address
         }
         if let octets = host.ipv4AddressOctets {
-            return octets[0] == 0
-                || octets[0] == 10
-                || octets[0] == 127
-                || (octets[0] == 100 && (64 ... 127).contains(octets[1]))
-                || (octets[0] == 169 && octets[1] == 254)
-                || (octets[0] == 172 && (16 ... 31).contains(octets[1]))
-                || (octets[0] == 192 && octets[1] == 168)
-                || octets[0] >= 224
+            return octets.isLocalOrPrivateIPv4Address
         }
         return false
     }
@@ -284,12 +280,14 @@ private extension String {
         hasSuffix(suffix) ? String(dropLast(suffix.count)) : self
     }
 
-    var ipv4MappedIPv6Host: String? {
-        guard hasPrefix("::ffff:") else {
+    var ipv6AddressBytes: [UInt8]? {
+        var address = in6_addr()
+        guard withCString({ inet_pton(AF_INET6, $0, &address) }) == 1 else {
             return nil
         }
-        let start = index(startIndex, offsetBy: "::ffff:".count)
-        return String(self[start...])
+        return withUnsafeBytes(of: address) { pointer in
+            Array(pointer)
+        }
     }
 
     var ipv4AddressOctets: [Int]? {
@@ -352,5 +350,45 @@ private extension String {
             return UInt64(component, radix: 8)
         }
         return UInt64(component, radix: 10)
+    }
+}
+
+private extension Array where Element == Int {
+    var isLocalOrPrivateIPv4Address: Bool {
+        guard count == 4 else {
+            return false
+        }
+        return self[0] == 0
+            || self[0] == 10
+            || self[0] == 127
+            || (self[0] == 100 && (64 ... 127).contains(self[1]))
+            || (self[0] == 169 && self[1] == 254)
+            || (self[0] == 172 && (16 ... 31).contains(self[1]))
+            || (self[0] == 192 && self[1] == 168)
+            || self[0] >= 224
+    }
+}
+
+private extension Array where Element == UInt8 {
+    var isLocalOrPrivateIPv6Address: Bool {
+        guard count == 16 else {
+            return false
+        }
+        if allSatisfy({ $0 == 0 }) || self == Array(repeating: 0, count: 15) + [1] {
+            return true
+        }
+        if self[0] == 0xfe && (0x80 ... 0xbf).contains(self[1]) {
+            return true
+        }
+        if (0xfc ... 0xfd).contains(self[0]) || self[0] == 0xff {
+            return true
+        }
+        if prefix(12).allSatisfy({ $0 == 0 }) {
+            return Array(suffix(4)).map(Int.init).isLocalOrPrivateIPv4Address
+        }
+        if prefix(10).allSatisfy({ $0 == 0 }) && self[10] == 0xff && self[11] == 0xff {
+            return Array(suffix(4)).map(Int.init).isLocalOrPrivateIPv4Address
+        }
+        return false
     }
 }

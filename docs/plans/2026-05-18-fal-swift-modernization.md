@@ -117,7 +117,9 @@ External references checked:
   - Payload auto-upload now works through the `Storage` protocol, so custom storage conformers can participate.
   - Typed `Encodable` inputs containing `Data` now fail at JSON encoding time instead of silently sending base64 JSON, including custom `encode(to:)` implementations.
   - `Payload.data` on GET requests now fails before query serialization to avoid leaking binary data into URLs.
-  - Remaining: direct CDN upload/token flow, fallback repositories, multipart upload for large files, presigned PUT redirect validation, and stricter raw invalid upload URL associated-value redaction.
+  - Presigned PUT redirects are validated before following when using the built-in URLSession transport, and final response URLs are checked as a fallback for fake/custom transports.
+  - Invalid storage URL associated values now redact query strings and fragments before throwing.
+  - Remaining: direct CDN upload/token flow, fallback repositories, multipart upload for large files, and an explicit DNS/host allowlist policy for public-looking storage hosts that resolve to private addresses.
 
 ## P1: Robustness and Test Coverage
 
@@ -170,7 +172,7 @@ External references checked:
 
 High-leverage implementation work that remains after the completed queue, streaming, endpoint parsing, request-option, and first storage modernization slices:
 
-- Storage security/parity: validate presigned PUT redirects, avoid exposing raw signed upload URL query strings in associated invalid URL values where practical, evaluate direct `v3.fal.media` token flow, fallback repositories, and multipart upload.
+- Storage security/parity: evaluate direct `v3.fal.media` token flow, fallback repositories, multipart upload, and whether storage PUTs should use DNS resolution or a documented storage-host allowlist to mitigate public hostnames that resolve to private addresses.
 - Client reliability: add retry policy for transient queue status/result and storage failures without retrying cancellation, user timeouts, or direct streams; add remaining explicit payload subscribe timeout/cancellation coverage.
 - Realtime parity: update token/path behavior against current Fal clients and add fake WebSocket/session boundary tests.
 - Media ergonomics: replace unsafe synchronous `FalImageContent.data` with async throwing helpers before deprecating it.
@@ -198,6 +200,7 @@ High-leverage implementation work that remains after the completed queue, stream
 - 2026-05-18: Added direct `FalClient.stream(...)` support for model `/stream` SSE endpoints with narrow `StreamOptions`, Payload and typed event decoding, custom stream paths, client HTTP timeout, and fake-transport coverage for error payloads and typed binary input rejection.
 - 2026-05-18: Added reserved-namespace endpoint parsing for `workflows/...` and `comfy/...`, normalized endpoint path joining, and queue follow-up URL construction that uses namespace/owner/alias while preserving endpoint subpaths for submit/direct calls.
 - 2026-05-18: Modernized the storage initiate endpoint to `rest.fal.ai` with `fal-cdn-v3`, added `StorageUploadOptions` for custom file names and uploaded-file lifecycle headers, sanitized custom file names, and kept presigned PUT requests free of Fal auth and lifecycle headers.
+- 2026-05-18: Hardened storage URL privacy and redirect behavior by redacting invalid signed URL associated values, rejecting numeric IPv6 loopback/private aliases, blocking unsafe presigned PUT redirects in the built-in URLSession transport, and documenting the remaining DNS trust-policy question.
 
 ## Non-Goals
 

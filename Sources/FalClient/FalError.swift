@@ -134,7 +134,7 @@ public struct FalHTTPError: Error, Equatable, LocalizedError, CustomStringConver
     }
 }
 
-private extension String {
+extension String {
     var redactedURLForDescription: String {
         guard var components = URLComponents(string: self) else {
             return self

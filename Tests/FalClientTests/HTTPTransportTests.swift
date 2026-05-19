@@ -2,6 +2,11 @@
 import XCTest
 
 final class HTTPTransportTests: XCTestCase {
+    override func tearDown() {
+        RedirectingURLProtocol.reset()
+        super.tearDown()
+    }
+
     func testSendRequestUsesInjectedHTTPTransport() async throws {
         let transport = RecordingHTTPTransport { request in
             let response = HTTPURLResponse(
@@ -63,6 +68,64 @@ final class HTTPTransportTests: XCTestCase {
         XCTAssertEqual(transport.requests.last?.httpMethod, "PUT")
     }
 
+    func testURLSessionTransportRejectsUnsafeRedirectsWhenValidatorIsProvided() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [RedirectingURLProtocol.self]
+        configuration.timeoutIntervalForRequest = 2
+        let session = URLSession(configuration: configuration)
+        defer {
+            session.invalidateAndCancel()
+        }
+        let transport = URLSessionHTTPTransport(session: session)
+        let request = URLRequest(url: URL(string: "https://storage.googleapis.com/upload")!)
+
+        do {
+            _ = try await transport.data(for: request, validatingRedirectsWith: { URL.safeExternalHTTPSURL($0) })
+            XCTFail("Expected unsafe redirect to be rejected")
+        } catch FalError.invalidUrl(let url) {
+            XCTAssertEqual(url, "http://127.0.0.1/upload")
+        }
+
+        XCTAssertEqual(RedirectingURLProtocol.requestedURLs(), [
+            URL(string: "https://storage.googleapis.com/upload")!,
+        ])
+    }
+
+    func testURLSessionTransportAllowsSafeRedirectsWhenValidatorIsProvided() async throws {
+        RedirectingURLProtocol.setRedirectLocation("https://storage.googleapis.com/final-upload")
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [RedirectingURLProtocol.self]
+        configuration.timeoutIntervalForRequest = 2
+        let session = URLSession(configuration: configuration)
+        defer {
+            session.invalidateAndCancel()
+        }
+        let transport = URLSessionHTTPTransport(session: session)
+        var request = URLRequest(url: URL(string: "https://storage.googleapis.com/upload")!)
+        request.httpMethod = "PUT"
+        request.httpBody = Data("image".utf8)
+        request.setValue("image/png", forHTTPHeaderField: "Content-Type")
+
+        let response = try await transport.data(
+            for: request,
+            validatingRedirectsWith: { URL.safeExternalHTTPSURL($0) }
+        )
+
+        XCTAssertEqual(String(data: response.data, encoding: .utf8), "ok")
+        XCTAssertEqual(RedirectingURLProtocol.requestedRequests(), [
+            RedirectingURLProtocolRequest(
+                url: URL(string: "https://storage.googleapis.com/upload")!,
+                httpMethod: "PUT",
+                contentType: "image/png"
+            ),
+            RedirectingURLProtocolRequest(
+                url: URL(string: "https://storage.googleapis.com/final-upload")!,
+                httpMethod: "PUT",
+                contentType: "image/png"
+            ),
+        ])
+    }
+
     func testServerSentEventParserYieldsDataEvents() async throws {
         let lines = AsyncThrowingStream<String, Error> { continuation in
             continuation.yield(": heartbeat")
@@ -98,6 +161,121 @@ final class HTTPTransportTests: XCTestCase {
             }
             """,
         ])
+    }
+}
+
+private final class RedirectingURLProtocol: URLProtocol {
+    private static let state = RedirectingURLProtocolState()
+
+    static func reset() {
+        state.reset()
+    }
+
+    static func setRedirectLocation(_ location: String) {
+        state.setRedirectLocation(location)
+    }
+
+    static func requestedURLs() -> [URL] {
+        state.requestedURLs()
+    }
+
+    static func requestedRequests() -> [RedirectingURLProtocolRequest] {
+        state.requestedRequests()
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool {
+        true
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        guard let url = request.url else {
+            client?.urlProtocol(self, didFailWithError: FalError.invalidResultFormat)
+            return
+        }
+        Self.state.appendRequestedRequest(
+            RedirectingURLProtocolRequest(
+                url: url,
+                httpMethod: request.httpMethod,
+                contentType: request.value(forHTTPHeaderField: "Content-Type")
+            )
+        )
+        let redirectLocation = Self.state.redirectLocation()
+        guard url.absoluteString != redirectLocation else {
+            let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: Data("ok".utf8))
+            client?.urlProtocolDidFinishLoading(self)
+            return
+        }
+        let response = HTTPURLResponse(
+            url: url,
+            statusCode: 307,
+            httpVersion: nil,
+            headerFields: [
+                "Location": redirectLocation,
+            ]
+        )!
+        var redirectRequest = request
+        redirectRequest.url = URL(string: redirectLocation)!
+        client?.urlProtocol(self, wasRedirectedTo: redirectRequest, redirectResponse: response)
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
+}
+
+private struct RedirectingURLProtocolRequest: Equatable, Sendable {
+    let url: URL
+    let httpMethod: String?
+    let contentType: String?
+}
+
+private final class RedirectingURLProtocolState: @unchecked Sendable {
+    private let defaultRedirectLocation = "http://127.0.0.1/upload?signature=secret"
+    private let lock = NSLock()
+    private var requests: [RedirectingURLProtocolRequest] = []
+    private var location = "http://127.0.0.1/upload?signature=secret"
+
+    func appendRequestedRequest(_ request: RedirectingURLProtocolRequest) {
+        lock.withLock {
+            requests.append(request)
+        }
+    }
+
+    func requestedURLs() -> [URL] {
+        lock.withLock {
+            requests.map(\.url)
+        }
+    }
+
+    func requestedRequests() -> [RedirectingURLProtocolRequest] {
+        lock.withLock {
+            requests
+        }
+    }
+
+    func setRedirectLocation(_ location: String) {
+        lock.withLock {
+            self.location = location
+        }
+    }
+
+    func redirectLocation() -> String {
+        lock.withLock {
+            location
+        }
+    }
+
+    func reset() {
+        lock.withLock {
+            requests.removeAll()
+            location = defaultRedirectLocation
+        }
     }
 }
 
