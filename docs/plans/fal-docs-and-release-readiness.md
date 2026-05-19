@@ -77,7 +77,7 @@ Recommended docs:
 - `docs/authentication-and-proxy.md`: API key safety, proxy, bearer/token usage.
 - `docs/queue.md`: submit, status, result, cancel, subscribe, status streaming.
 - `docs/streaming.md`: direct SSE stream endpoints.
-- `docs/storage.md`: uploads, content types, lifecycle settings.
+- `docs/storage.md`: uploads, content types, lifecycle settings. Created with the current v3-first default chain and fallback behavior.
 - `docs/errors.md`: public error metadata and retry guidance.
 - `CONTRIBUTING.md`: setup, targeted test commands, sample build commands, release checklist.
 - `CHANGELOG.md`: start with unreleased section and note this fork's local fixes.

@@ -104,6 +104,24 @@ public struct StorageMultipartUploadOptions: Equatable, Sendable {
 
 /// Options that customize a storage upload.
 public struct StorageUploadOptions: Equatable, Sendable {
+    /// Preferred primary upload backend for this package.
+    public static let defaultRepository: StorageUploadRepository = .directFalCDNV3
+
+    /// Preferred fallback upload backends, in order.
+    public static let defaultFallbackRepositories: [StorageUploadRepository] = [
+        .directFalMedia,
+        .falCDNV3PresignedURL,
+    ]
+
+    /// Preferred modern Fal CDN upload behavior.
+    public static let preferredFalCDN = StorageUploadOptions()
+
+    /// Legacy REST presigned URL upload behavior.
+    public static let presignedFalCDNV3 = StorageUploadOptions(
+        repository: .falCDNV3PresignedURL,
+        fallbackRepositories: []
+    )
+
     /// File name sent to fal as upload metadata.
     ///
     /// This value may be visible in storage metadata or generated URLs. Only
@@ -132,15 +150,19 @@ public struct StorageUploadOptions: Equatable, Sendable {
     public init(
         fileName: String? = nil,
         objectLifecyclePreference: FalObjectLifecyclePreference? = nil,
-        repository: StorageUploadRepository = .falCDNV3PresignedURL,
-        fallbackRepositories: [StorageUploadRepository] = [],
+        repository: StorageUploadRepository = StorageUploadOptions.defaultRepository,
+        fallbackRepositories: [StorageUploadRepository]? = nil,
         multipartUpload: StorageMultipartUploadOptions = .automatic
     ) {
         self.fileName = fileName
         self.objectLifecyclePreference = objectLifecyclePreference
         self.repository = repository
-        self.fallbackRepositories = fallbackRepositories
+        self.fallbackRepositories = fallbackRepositories ?? Self.defaultFallbackRepositories(for: repository)
         self.multipartUpload = multipartUpload
+    }
+
+    private static func defaultFallbackRepositories(for repository: StorageUploadRepository) -> [StorageUploadRepository] {
+        repository == defaultRepository ? defaultFallbackRepositories : []
     }
 }
 
@@ -290,7 +312,10 @@ struct StorageClient: Storage {
     }
 
     func upload(data: Data, ofType type: FileType, options: StorageUploadOptions) async throws -> String {
-        let repositories = options.repositoryChain
+        if let objectLifecyclePreference = options.objectLifecyclePreference {
+            _ = try objectLifecyclePreference.headerValue()
+        }
+        let repositories = try effectiveRepositoryChain(for: options)
         var lastError: Error?
         for repository in repositories {
             do {
@@ -307,6 +332,37 @@ struct StorageClient: Storage {
             }
         }
         throw lastError ?? FalError.invalidResultFormat
+    }
+
+    private func effectiveRepositoryChain(for options: StorageUploadOptions) throws -> [StorageUploadRepository] {
+        var repositories: [StorageUploadRepository] = []
+        for (index, repository) in options.repositoryChain.enumerated() {
+            guard repository.kind == .directFalMedia else {
+                repositories.append(repository)
+                continue
+            }
+            if client.config.requestProxy != nil {
+                if index == 0 {
+                    throw FalError.unsupportedInput(
+                        message: "Direct fal.media uploads are unavailable when requestProxy is configured."
+                    )
+                }
+                continue
+            }
+            if !client.canAuthorizeDirectFalMediaUpload {
+                if index == 0 {
+                    repositories.append(repository)
+                }
+                continue
+            }
+            repositories.append(repository)
+        }
+        guard !repositories.isEmpty else {
+            throw FalError.unsupportedInput(
+                message: "No supported storage upload repositories are available for the current client configuration."
+            )
+        }
+        return repositories
     }
 
     private func upload(
@@ -375,20 +431,16 @@ struct StorageClient: Storage {
             request.setValue(lifecycleHeader, forHTTPHeaderField: "X-Fal-Object-Lifecycle-Preference")
         }
 
-        do {
-            let response = try await client.resolvedHTTPTransport.data(
-                for: request,
-                validatingRedirectsWith: { URL.safeFalDirectMediaUploadURL($0) }
-            )
-            try client.checkResponseStatus(for: response.response, withData: response.data)
-            let uploadResponse = try JSONDecoder().decode(DirectStorageUploadResponse.self, from: response.data)
-            guard URL.safeFalStorageFileURL(from: uploadResponse.accessURL) != nil else {
-                throw FalError.invalidUrl(url: uploadResponse.accessURL.redactedURLForDescription)
-            }
-            return uploadResponse.accessURL
-        } catch {
-            throw TerminalStorageUploadError(underlying: error)
+        let response = try await client.resolvedHTTPTransport.data(
+            for: request,
+            validatingRedirectsWith: { URL.safeFalDirectMediaUploadURL($0) }
+        )
+        try client.checkResponseStatus(for: response.response, withData: response.data)
+        let uploadResponse = try JSONDecoder().decode(DirectStorageUploadResponse.self, from: response.data)
+        guard URL.safeFalStorageFileURL(from: uploadResponse.accessURL) != nil else {
+            throw FalError.invalidUrl(url: uploadResponse.accessURL.redactedURLForDescription)
         }
+        return uploadResponse.accessURL
     }
 
     private func uploadDirectlyToFalCDNV3(data: Data, ofType type: FileType, options: StorageUploadOptions) async throws -> String {
@@ -416,20 +468,16 @@ struct StorageClient: Storage {
             request.setValue(lifecycleHeader, forHTTPHeaderField: "X-Fal-Object-Lifecycle-Preference")
         }
 
-        do {
-            let response = try await client.resolvedHTTPTransport.data(
-                for: request,
-                validatingRedirectsWith: { URL.safeFalDirectCDNV3UploadURL($0) }
-            )
-            try client.checkResponseStatus(for: response.response, withData: response.data)
-            let uploadResponse = try JSONDecoder().decode(DirectStorageUploadResponse.self, from: response.data)
-            guard URL.safeFalStorageFileURL(from: uploadResponse.accessURL) != nil else {
-                throw FalError.invalidUrl(url: uploadResponse.accessURL.redactedURLForDescription)
-            }
-            return uploadResponse.accessURL
-        } catch {
-            throw TerminalStorageUploadError(underlying: error)
+        let response = try await client.resolvedHTTPTransport.data(
+            for: request,
+            validatingRedirectsWith: { URL.safeFalDirectCDNV3UploadURL($0) }
+        )
+        try client.checkResponseStatus(for: response.response, withData: response.data)
+        let uploadResponse = try JSONDecoder().decode(DirectStorageUploadResponse.self, from: response.data)
+        guard URL.safeFalStorageFileURL(from: uploadResponse.accessURL) != nil else {
+            throw FalError.invalidUrl(url: uploadResponse.accessURL.redactedURLForDescription)
         }
+        return uploadResponse.accessURL
     }
 
     private func uploadMultipartDirectlyToFalCDNV3(data: Data, ofType type: FileType, options: StorageUploadOptions) async throws -> String {
@@ -641,6 +689,20 @@ private extension HTTPURLResponse {
 }
 
 private extension Client {
+    var canAuthorizeDirectFalMediaUpload: Bool {
+        let credentials = config.credentials.rawValue
+        guard !credentials.isEmpty else {
+            return false
+        }
+        switch config.authScheme {
+        case .bearer:
+            return true
+        case .key:
+            let parts = credentials.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
+            return parts.count == 2 && !parts[1].isEmpty
+        }
+    }
+
     func falMediaAuthorizationHeader() throws -> String {
         let credentials = config.credentials.rawValue
         guard !credentials.isEmpty else {

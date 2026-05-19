@@ -109,7 +109,7 @@ External references checked:
   - Direct requests and queue submit preserve the full endpoint path.
   - Queue follow-up operations (`status`, `streamStatus`, `response`, `cancel`) use the stable namespace/owner/alias queue base for `workflows` and `comfy`.
 
-- [ ] Modernize storage uploads after request options land.
+- [x] Modernize storage uploads after request options land.
   - Move away from `rest.alpha.fal.ai` where appropriate. Upload initiation now uses `https://rest.fal.ai/storage/upload/initiate?storage_type=fal-cdn-v3`.
   - Add lifecycle settings, file names, recursive `Payload` transform, and explicit behavior for typed `Data`.
   - Storage upload options now support custom file names and uploaded-file lifecycle headers while preserving existing `Storage` conformers. Custom names are sanitized and Windows-style path components are stripped.
@@ -119,10 +119,12 @@ External references checked:
   - `Payload.data` on GET requests now fails before query serialization to avoid leaking binary data into URLs.
   - Presigned PUT redirects are validated before following when using the built-in URLSession transport, and final response URLs are checked as a fallback for fake/custom transports.
   - Invalid storage URL associated values now redact query strings and fragments before throwing.
-  - Added opt-in direct Fal CDN v3 upload using the REST CDN token endpoint, plus explicit fallback repository sequencing from the existing presigned flow to direct CDN v3.
+  - Added direct Fal CDN v3 upload using the REST CDN token endpoint, plus explicit fallback repository sequencing.
   - Added a storage-specific host allowlist for upload, redirect, and returned file URLs so storage no longer trusts arbitrary public-looking HTTPS hosts.
   - Added direct Fal CDN v3 multipart upload support with automatic 100 MB threshold, 10 MB chunks, configurable thresholds for tests/special cases, sequential part upload, and terminal error handling after body upload starts.
   - Added direct `fal.media` fallback repository support for callers that want the documented fallback endpoint in their repository chain.
+  - Default uploads now use the modern Fal CDN order: direct CDN v3, then direct `fal.media`, then REST presigned upload. Explicit `.presignedFalCDNV3` remains available for legacy REST-presigned behavior, and explicit non-default repositories do not inherit the default fallback chain.
+  - Default fallback resolution skips direct `fal.media` when `requestProxy` is configured or when credentials cannot authorize direct `fal.media`, so app/proxy setups do not leak raw Fal secrets or get stuck before REST presigned fallback.
   - DNS preflight/private-address resolution checks are intentionally deferred. The explicit Fal storage host allowlist remains, but deeper DNS rebinding defense is not worth the complexity unless a concrete threat or production issue appears.
 
 ## P1: Robustness and Test Coverage
@@ -166,7 +168,7 @@ External references checked:
   - Queue submit/subscribe/cancel.
   - Streaming.
   - Realtime.
-  - Storage uploads.
+  - Storage uploads. `docs/storage.md` now documents the modern default CDN chain, multipart behavior, legacy presigned option, lifecycle settings, and fallback tradeoff.
   - Error handling.
 
 - [ ] Update sample apps or mark them as legacy.
@@ -184,7 +186,6 @@ External references checked:
 
 High-leverage implementation work that remains after the completed queue, streaming, endpoint parsing, request-option, and first storage modernization slices:
 
-- Storage follow-up: decide whether the default repository chain should eventually become direct CDN v3 -> `fal.media` -> REST presigned, or stay conservative for existing proxy/presigned users.
 - Client reliability: decide whether any future retry knobs should be public configuration.
 - Realtime follow-up: refresh README/sample guidance and decide whether a public custom token-provider hook is useful for this fork.
 - Release readiness: README refresh, markdown guides, sample cleanup/legacy labeling, CI, changelog, contributing guide, and user-agent/package version cleanup.
@@ -218,6 +219,7 @@ High-leverage implementation work that remains after the completed queue, stream
 - 2026-05-18: Added opt-in direct Fal CDN v3 storage uploads via the REST CDN token endpoint, client-side fallback repository sequencing, and storage-specific host allowlisting for upload, redirect, and returned file URLs.
 - 2026-05-18: Added direct Fal CDN v3 multipart storage upload support with automatic large-file thresholding, configurable chunk sizing, part ETag completion payloads, and tests for chunk sequencing plus invalid option validation.
 - 2026-05-18: Added explicit direct `fal.media` storage upload support with bearer-secret auth, lifecycle/file-name headers, safe returned URL validation, and fallback sequencing from pre-body direct CDN v3 failures.
+- 2026-05-18: Promoted storage defaults to the modern Fal CDN chain: direct CDN v3 -> direct `fal.media` -> REST presigned, with `.presignedFalCDNV3` kept for explicit legacy REST-presigned uploads and proxy/credential-aware skipping of direct `fal.media`.
 
 ## Non-Goals
 

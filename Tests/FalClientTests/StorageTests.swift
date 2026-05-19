@@ -2,7 +2,92 @@
 import XCTest
 
 final class StorageTests: XCTestCase {
-    func testUploadInitiateSendsGeneratedFileNameAndNoLifecycleByDefault() async throws {
+    func testDefaultUploadUsesDirectFalCDNV3WithFallbackRepositories() async throws {
+        let image = Data("image".utf8)
+        let transport = RecordingHTTPTransport { request in
+            switch request.url?.absoluteString {
+            case "https://rest.fal.ai/storage/auth/token?storage_type=fal-cdn-v3":
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!
+                let data = """
+                {
+                  "token": "cdn-token",
+                  "token_type": "Bearer",
+                  "base_url": "https://v3.fal.media",
+                  "expires_at": "2026-05-19T12:00:00+00:00"
+                }
+                """.data(using: .utf8)!
+                return HTTPTransportResponse(data: data, response: response)
+            case "https://v3.fal.media/files/upload":
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!
+                let data = #"{"access_url":"https://v3.fal.media/files/rabbit/default.png"}"#.data(using: .utf8)!
+                return HTTPTransportResponse(data: data, response: response)
+            default:
+                XCTFail("Unexpected request to \(request.url?.absoluteString ?? "nil")")
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 500,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!
+                return HTTPTransportResponse(data: Data(), response: response)
+            }
+        }
+        let storage: Storage = StorageClient(client: StorageTestClient(httpTransport: transport))
+
+        let fileUrl = try await storage.upload(data: image, ofType: .imagePng)
+
+        XCTAssertEqual(fileUrl, "https://v3.fal.media/files/rabbit/default.png")
+        XCTAssertEqual(StorageUploadOptions().repository, .directFalCDNV3)
+        XCTAssertEqual(StorageUploadOptions().fallbackRepositories, [.directFalMedia, .falCDNV3PresignedURL])
+        XCTAssertEqual(transport.requests.map { $0.url?.absoluteString }, [
+            "https://rest.fal.ai/storage/auth/token?storage_type=fal-cdn-v3",
+            "https://v3.fal.media/files/upload",
+        ])
+    }
+
+    func testExplicitPresignedRepositoryDoesNotUseDefaultFallbacks() async throws {
+        let transport = RecordingHTTPTransport { request in
+            XCTAssertEqual(
+                request.url?.absoluteString,
+                "https://rest.fal.ai/storage/upload/initiate?storage_type=fal-cdn-v3"
+            )
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 503,
+                httpVersion: nil,
+                headerFields: nil
+            )!
+            return HTTPTransportResponse(data: Data(#"{"detail":"temporarily unavailable"}"#.utf8), response: response)
+        }
+        let storage = StorageClient(client: StorageTestClient(httpTransport: transport))
+
+        XCTAssertEqual(StorageUploadOptions(repository: .falCDNV3PresignedURL).fallbackRepositories, [])
+        do {
+            _ = try await storage.upload(
+                data: Data("image".utf8),
+                ofType: .imagePng,
+                options: .init(repository: .falCDNV3PresignedURL)
+            )
+            XCTFail("Expected presigned upload to fail without trying default fallbacks")
+        } catch FalError.httpError(let error) {
+            XCTAssertEqual(error.statusCode, 503)
+        }
+        XCTAssertEqual(transport.requests.map { $0.url?.absoluteString }, [
+            "https://rest.fal.ai/storage/upload/initiate?storage_type=fal-cdn-v3",
+        ])
+    }
+
+    func testPresignedUploadInitiateSendsGeneratedFileNameAndNoLifecycleByDefault() async throws {
         let transport = RecordingHTTPTransport { request in
             if request.url?.host == "rest.fal.ai" {
                 let response = HTTPURLResponse(
@@ -30,7 +115,11 @@ final class StorageTests: XCTestCase {
         }
         let storage: Storage = StorageClient(client: StorageTestClient(httpTransport: transport))
 
-        _ = try await storage.upload(data: Data("image".utf8), ofType: .imagePng)
+        _ = try await storage.upload(
+            data: Data("image".utf8),
+            ofType: .imagePng,
+            options: .init(repository: .falCDNV3PresignedURL, fallbackRepositories: [])
+        )
 
         let initiateRequest = try XCTUnwrap(transport.requests.first)
         XCTAssertEqual(initiateRequest.httpMethod, "POST")
@@ -80,7 +169,9 @@ final class StorageTests: XCTestCase {
             ofType: .imagePng,
             options: StorageUploadOptions(
                 fileName: "custom.png",
-                objectLifecyclePreference: .init(expirationDuration: 3_600)
+                objectLifecyclePreference: .init(expirationDuration: 3_600),
+                repository: .falCDNV3PresignedURL,
+                fallbackRepositories: []
             )
         )
 
@@ -151,7 +242,11 @@ final class StorageTests: XCTestCase {
         }
         let storage: Storage = StorageClient(client: StorageTestClient(httpTransport: transport))
 
-        let fileUrl = try await storage.upload(data: Data("image".utf8), ofType: .imagePng)
+        let fileUrl = try await storage.upload(
+            data: Data("image".utf8),
+            ofType: .imagePng,
+            options: .init(repository: .falCDNV3PresignedURL, fallbackRepositories: [])
+        )
 
         XCTAssertEqual(fileUrl, "https://fal.media/retried.png")
         XCTAssertEqual(putAttempts, 2)
@@ -178,7 +273,11 @@ final class StorageTests: XCTestCase {
         let storage: Storage = StorageClient(client: StorageTestClient(httpTransport: transport))
 
         do {
-            _ = try await storage.upload(data: Data("image".utf8), ofType: .imagePng)
+            _ = try await storage.upload(
+                data: Data("image".utf8),
+                ofType: .imagePng,
+                options: .init(repository: .falCDNV3PresignedURL, fallbackRepositories: [])
+            )
             XCTFail("Expected transient initiate failure")
         } catch FalError.httpError(let error) {
             XCTAssertEqual(error.statusCode, 503)
@@ -245,7 +344,11 @@ final class StorageTests: XCTestCase {
         _ = try await storage.upload(
             data: Data("image".utf8),
             ofType: .imagePng,
-            options: .init(fileName: "C:\\Users\\chris\\private\rname.png")
+            options: .init(
+                fileName: "C:\\Users\\chris\\private\rname.png",
+                repository: .falCDNV3PresignedURL,
+                fallbackRepositories: []
+            )
         )
 
         let initiateRequest = try XCTUnwrap(transport.requests.first)
@@ -274,7 +377,7 @@ final class StorageTests: XCTestCase {
             _ = try await storage.upload(
                 data: Data("custom-repository".utf8),
                 ofType: .imagePng,
-                options: .init(repository: .directFalCDNV3)
+                options: .presignedFalCDNV3
             )
             XCTFail("Expected custom storage implementation to reject non-default repository")
         } catch FalError.unsupportedOperation {
@@ -490,7 +593,11 @@ final class StorageTests: XCTestCase {
         let storage = StorageClient(client: StorageTestClient(httpTransport: transport))
 
         do {
-            _ = try await storage.upload(data: Data("image".utf8), ofType: .imagePng)
+            _ = try await storage.upload(
+                data: Data("image".utf8),
+                ofType: .imagePng,
+                options: .init(repository: .falCDNV3PresignedURL, fallbackRepositories: [])
+            )
             XCTFail("Expected upload to reject unsafe final response URL")
         } catch FalError.invalidUrl(let url) {
             XCTAssertEqual(url, "http://127.0.0.1/upload")
@@ -598,7 +705,7 @@ final class StorageTests: XCTestCase {
         XCTAssertEqual(transport.requests.count, 1)
     }
 
-    func testDirectFalCDNV3UploadDoesNotFallbackAfterBodyUploadStarts() async throws {
+    func testDirectFalCDNV3UploadFallsBackAfterTransientBodyUploadFailure() async throws {
         let transport = RecordingHTTPTransport { request in
             switch request.url?.absoluteString {
             case "https://rest.fal.ai/storage/auth/token?storage_type=fal-cdn-v3":
@@ -625,6 +732,28 @@ final class StorageTests: XCTestCase {
                     headerFields: nil
                 )!
                 return HTTPTransportResponse(data: Data(#"{"detail":"temporarily unavailable"}"#.utf8), response: response)
+            case "https://rest.fal.ai/storage/upload/initiate?storage_type=fal-cdn-v3":
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!
+                let data = """
+                {
+                  "file_url": "https://fal.media/files/rabbit/fallback-from-v3.png",
+                  "upload_url": "https://storage.googleapis.com/upload"
+                }
+                """.data(using: .utf8)!
+                return HTTPTransportResponse(data: data, response: response)
+            case "https://storage.googleapis.com/upload":
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!
+                return HTTPTransportResponse(data: Data(), response: response)
             default:
                 XCTFail("Unexpected request to \(request.url?.absoluteString ?? "nil")")
                 let response = HTTPURLResponse(
@@ -638,20 +767,18 @@ final class StorageTests: XCTestCase {
         }
         let storage = StorageClient(client: StorageTestClient(httpTransport: transport))
 
-        do {
-            _ = try await storage.upload(
-                data: Data("image".utf8),
-                ofType: .imagePng,
-                options: .init(repository: .directFalCDNV3, fallbackRepositories: [.falCDNV3PresignedURL])
-            )
-            XCTFail("Expected direct upload failure to be terminal")
-        } catch FalError.httpError(let error) {
-            XCTAssertEqual(error.statusCode, 503)
-        }
+        let fileURL = try await storage.upload(
+            data: Data("image".utf8),
+            ofType: .imagePng,
+            options: .init(repository: .directFalCDNV3, fallbackRepositories: [.falCDNV3PresignedURL])
+        )
 
+        XCTAssertEqual(fileURL, "https://fal.media/files/rabbit/fallback-from-v3.png")
         XCTAssertEqual(transport.requests.map { $0.url?.absoluteString }, [
             "https://rest.fal.ai/storage/auth/token?storage_type=fal-cdn-v3",
             "https://v3.fal.media/files/upload",
+            "https://rest.fal.ai/storage/upload/initiate?storage_type=fal-cdn-v3",
+            "https://storage.googleapis.com/upload",
         ])
     }
 
@@ -889,7 +1016,11 @@ final class StorageTests: XCTestCase {
         let fileURL = try await storage.upload(
             data: Data("image".utf8),
             ofType: .imagePng,
-            options: .init(multipartUpload: .init(thresholdBytes: 0, chunkSizeBytes: 0))
+            options: .init(
+                repository: .falCDNV3PresignedURL,
+                fallbackRepositories: [],
+                multipartUpload: .init(thresholdBytes: 0, chunkSizeBytes: 0)
+            )
         )
 
         XCTAssertEqual(fileURL, "https://fal.media/file.png")
@@ -1134,7 +1265,7 @@ final class StorageTests: XCTestCase {
         let fileUrl = try await storage.upload(
             data: Data("image".utf8),
             ofType: .imagePng,
-            options: .init(fallbackRepositories: [.directFalCDNV3])
+            options: .init(repository: .falCDNV3PresignedURL, fallbackRepositories: [.directFalCDNV3])
         )
 
         XCTAssertEqual(fileUrl, "https://v3.fal.media/files/rabbit/fallback.png")
@@ -1238,7 +1369,7 @@ final class StorageTests: XCTestCase {
         }
     }
 
-    func testDirectFalMediaUploadDoesNotFallbackAfterBodyUploadStarts() async throws {
+    func testDirectFalMediaUploadFallsBackAfterTransientBodyUploadFailure() async throws {
         let transport = RecordingHTTPTransport { request in
             switch request.url?.absoluteString {
             case "https://fal.media/files/upload":
@@ -1249,6 +1380,28 @@ final class StorageTests: XCTestCase {
                     headerFields: nil
                 )!
                 return HTTPTransportResponse(data: Data(#"{"detail":"temporarily unavailable"}"#.utf8), response: response)
+            case "https://rest.fal.ai/storage/upload/initiate?storage_type=fal-cdn-v3":
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!
+                let data = """
+                {
+                  "file_url": "https://fal.media/files/rabbit/fallback-from-media.png",
+                  "upload_url": "https://storage.googleapis.com/upload"
+                }
+                """.data(using: .utf8)!
+                return HTTPTransportResponse(data: data, response: response)
+            case "https://storage.googleapis.com/upload":
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!
+                return HTTPTransportResponse(data: Data(), response: response)
             default:
                 XCTFail("Unexpected request to \(request.url?.absoluteString ?? "nil")")
                 let response = HTTPURLResponse(
@@ -1262,22 +1415,20 @@ final class StorageTests: XCTestCase {
         }
         let storage = StorageClient(client: StorageTestClient(httpTransport: transport))
 
-        do {
-            _ = try await storage.upload(
-                data: Data("image".utf8),
-                ofType: .imagePng,
-                options: .init(
-                    repository: .directFalMedia,
-                    fallbackRepositories: [.falCDNV3PresignedURL]
-                )
+        let fileURL = try await storage.upload(
+            data: Data("image".utf8),
+            ofType: .imagePng,
+            options: .init(
+                repository: .directFalMedia,
+                fallbackRepositories: [.falCDNV3PresignedURL]
             )
-            XCTFail("Expected direct fal.media body upload failure to be terminal")
-        } catch FalError.httpError(let error) {
-            XCTAssertEqual(error.statusCode, 503)
-        }
+        )
 
+        XCTAssertEqual(fileURL, "https://fal.media/files/rabbit/fallback-from-media.png")
         XCTAssertEqual(transport.requests.map { $0.url?.absoluteString }, [
             "https://fal.media/files/upload",
+            "https://rest.fal.ai/storage/upload/initiate?storage_type=fal-cdn-v3",
+            "https://storage.googleapis.com/upload",
         ])
     }
 
@@ -1332,6 +1483,205 @@ final class StorageTests: XCTestCase {
         ])
     }
 
+    func testDefaultUploadFallsBackThroughFalMediaToPresignedREST() async throws {
+        let transport = RecordingHTTPTransport { request in
+            switch request.url?.absoluteString {
+            case "https://rest.fal.ai/storage/auth/token?storage_type=fal-cdn-v3":
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 503,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!
+                return HTTPTransportResponse(data: Data(#"{"detail":"temporarily unavailable"}"#.utf8), response: response)
+            case "https://fal.media/files/upload":
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 503,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!
+                return HTTPTransportResponse(data: Data(#"{"detail":"temporarily unavailable"}"#.utf8), response: response)
+            case "https://rest.fal.ai/storage/upload/initiate?storage_type=fal-cdn-v3":
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!
+                let data = """
+                {
+                  "file_url": "https://fal.media/files/rabbit/default-rest-fallback.png",
+                  "upload_url": "https://storage.googleapis.com/upload"
+                }
+                """.data(using: .utf8)!
+                return HTTPTransportResponse(data: data, response: response)
+            case "https://storage.googleapis.com/upload":
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!
+                return HTTPTransportResponse(data: Data(), response: response)
+            default:
+                XCTFail("Unexpected request to \(request.url?.absoluteString ?? "nil")")
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 500,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!
+                return HTTPTransportResponse(data: Data(), response: response)
+            }
+        }
+        let storage = StorageClient(client: StorageTestClient(httpTransport: transport))
+
+        let fileUrl = try await storage.upload(data: Data("image".utf8), ofType: .imagePng)
+
+        XCTAssertEqual(fileUrl, "https://fal.media/files/rabbit/default-rest-fallback.png")
+        XCTAssertEqual(transport.requests.map { $0.url?.absoluteString }, [
+            "https://rest.fal.ai/storage/auth/token?storage_type=fal-cdn-v3",
+            "https://rest.fal.ai/storage/auth/token?storage_type=fal-cdn-v3",
+            "https://rest.fal.ai/storage/auth/token?storage_type=fal-cdn-v3",
+            "https://fal.media/files/upload",
+            "https://rest.fal.ai/storage/upload/initiate?storage_type=fal-cdn-v3",
+            "https://storage.googleapis.com/upload",
+        ])
+    }
+
+    func testDefaultUploadWithProxySkipsDirectFalMediaFallback() async throws {
+        let proxyURL = "https://proxy.example.com/api/fal/proxy"
+        let transport = RecordingHTTPTransport { request in
+            switch request.value(forHTTPHeaderField: "x-fal-target-url") ?? request.url?.absoluteString {
+            case "https://rest.fal.ai/storage/auth/token?storage_type=fal-cdn-v3":
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 503,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!
+                return HTTPTransportResponse(data: Data(#"{"detail":"temporarily unavailable"}"#.utf8), response: response)
+            case "https://rest.fal.ai/storage/upload/initiate?storage_type=fal-cdn-v3":
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!
+                let data = """
+                {
+                  "file_url": "https://fal.media/files/rabbit/proxy-rest-fallback.png",
+                  "upload_url": "https://storage.googleapis.com/upload"
+                }
+                """.data(using: .utf8)!
+                return HTTPTransportResponse(data: data, response: response)
+            case "https://storage.googleapis.com/upload":
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!
+                return HTTPTransportResponse(data: Data(), response: response)
+            default:
+                XCTFail("Unexpected request to \(request.url?.absoluteString ?? "nil")")
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 500,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!
+                return HTTPTransportResponse(data: Data(), response: response)
+            }
+        }
+        let client = StorageTestClient(
+            config: ClientConfig(
+                credentials: .keyPair("test-key:test-secret"),
+                requestProxy: proxyURL
+            ),
+            httpTransport: transport
+        )
+        let storage = StorageClient(client: client)
+
+        let fileUrl = try await storage.upload(data: Data("image".utf8), ofType: .imagePng)
+
+        XCTAssertEqual(fileUrl, "https://fal.media/files/rabbit/proxy-rest-fallback.png")
+        XCTAssertFalse(transport.requests.contains { $0.url?.host == "fal.media" })
+        XCTAssertEqual(
+            transport.requests.map { $0.value(forHTTPHeaderField: "x-fal-target-url") ?? $0.url?.absoluteString },
+            [
+                "https://rest.fal.ai/storage/auth/token?storage_type=fal-cdn-v3",
+                "https://rest.fal.ai/storage/auth/token?storage_type=fal-cdn-v3",
+                "https://rest.fal.ai/storage/auth/token?storage_type=fal-cdn-v3",
+                "https://rest.fal.ai/storage/upload/initiate?storage_type=fal-cdn-v3",
+                "https://storage.googleapis.com/upload",
+            ]
+        )
+    }
+
+    func testDefaultUploadSkipsDirectFalMediaFallbackWhenCredentialsCannotAuthorizeIt() async throws {
+        let transport = RecordingHTTPTransport { request in
+            switch request.url?.absoluteString {
+            case "https://rest.fal.ai/storage/auth/token?storage_type=fal-cdn-v3":
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 503,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!
+                return HTTPTransportResponse(data: Data(#"{"detail":"temporarily unavailable"}"#.utf8), response: response)
+            case "https://rest.fal.ai/storage/upload/initiate?storage_type=fal-cdn-v3":
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!
+                let data = """
+                {
+                  "file_url": "https://fal.media/files/rabbit/malformed-key-rest-fallback.png",
+                  "upload_url": "https://storage.googleapis.com/upload"
+                }
+                """.data(using: .utf8)!
+                return HTTPTransportResponse(data: data, response: response)
+            case "https://storage.googleapis.com/upload":
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!
+                return HTTPTransportResponse(data: Data(), response: response)
+            default:
+                XCTFail("Unexpected request to \(request.url?.absoluteString ?? "nil")")
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 500,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!
+                return HTTPTransportResponse(data: Data(), response: response)
+            }
+        }
+        let client = StorageTestClient(
+            config: ClientConfig(credentials: .keyPair("malformed-key")),
+            httpTransport: transport
+        )
+        let storage = StorageClient(client: client)
+
+        let fileUrl = try await storage.upload(data: Data("image".utf8), ofType: .imagePng)
+
+        XCTAssertEqual(fileUrl, "https://fal.media/files/rabbit/malformed-key-rest-fallback.png")
+        XCTAssertEqual(transport.requests.map { $0.url?.absoluteString }, [
+            "https://rest.fal.ai/storage/auth/token?storage_type=fal-cdn-v3",
+            "https://rest.fal.ai/storage/auth/token?storage_type=fal-cdn-v3",
+            "https://rest.fal.ai/storage/auth/token?storage_type=fal-cdn-v3",
+            "https://rest.fal.ai/storage/upload/initiate?storage_type=fal-cdn-v3",
+            "https://storage.googleapis.com/upload",
+        ])
+    }
+
     private func assertUploadThrowsInvalidUrl(
         fileUrl: String,
         uploadUrl: String,
@@ -1356,7 +1706,11 @@ final class StorageTests: XCTestCase {
         let storage = StorageClient(client: StorageTestClient(httpTransport: transport))
 
         do {
-            _ = try await storage.upload(data: Data("image".utf8), ofType: .imagePng)
+            _ = try await storage.upload(
+                data: Data("image".utf8),
+                ofType: .imagePng,
+                options: .init(repository: .falCDNV3PresignedURL, fallbackRepositories: [])
+            )
             XCTFail("Expected upload to throw")
         } catch FalError.invalidUrl(let url) {
             XCTAssertEqual(url, expectedInvalidUrl)

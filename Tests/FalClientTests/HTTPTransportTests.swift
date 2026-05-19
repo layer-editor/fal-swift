@@ -58,7 +58,11 @@ final class HTTPTransportTests: XCTestCase {
         let client = TransportTestClient(httpTransport: transport)
         let storage = StorageClient(client: client)
 
-        let fileUrl = try await storage.upload(data: Data("image".utf8), ofType: FileType.imagePng)
+        let fileUrl = try await storage.upload(
+            data: Data("image".utf8),
+            ofType: FileType.imagePng,
+            options: .presignedFalCDNV3
+        )
 
         XCTAssertEqual(fileUrl, "https://fal.media/file.png")
         XCTAssertEqual(transport.requests.map { $0.url?.absoluteString }, [

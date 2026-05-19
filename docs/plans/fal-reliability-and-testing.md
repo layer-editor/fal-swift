@@ -222,6 +222,10 @@ Cases:
 - Nested dictionary and array data uploads recursively. Covered by `StorageTests`.
 - Invalid upload URL throws instead of crashing and rejects malformed, hostless, loopback, private, trailing-dot loopback, IPv4-mapped IPv6 loopback, numeric/hex/octal loopback, and invalid returned file URLs.
 - Upload initiation uses `rest.fal.ai` with `storage_type=fal-cdn-v3`, generated file names by default, custom sanitized file names when requested, and upload lifecycle headers only on the initiate request.
+- Default uploads use direct Fal CDN v3 first, then direct `fal.media`, then REST presigned upload. This matches the current Fal client direction and prioritizes the fast CDN path for OpenStudio-style media workflows.
+- Direct `fal.media` is skipped as an intermediate default fallback when `requestProxy` is configured or credentials cannot authorize it, preserving proxy credential protection and letting REST presigned fallback run.
+- Direct CDN v3 uploads use multipart automatically above the configured threshold. Multipart failures remain terminal after part upload starts because falling back would re-upload a partially completed multipart object.
+- Small direct upload failures can fall through to the configured fallback repository, which may leave an orphaned object if the server accepted bytes but failed before returning a response. This is an intentional resilience tradeoff and mirrors peer-client behavior.
 - Presigned PUT requests keep the original body, content type, content length, and do not receive Fal authorization or lifecycle headers.
 - Invalid object lifecycle durations throw before any request is sent.
 - Invalid storage URL associated values redact signed query strings and fragments before being thrown.

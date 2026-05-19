@@ -93,7 +93,7 @@ Implemented model:
 
 ## Storage Parity
 
-Current storage covers simple and nested `Payload.data` uploads and now exposes a small options surface for upload metadata.
+Current storage covers simple and nested `Payload.data` uploads and defaults to the modern Fal CDN upload path.
 
 Implemented:
 
@@ -103,6 +103,11 @@ Implemented:
 - Custom file names/content type.
 - Object lifecycle preferences.
 - `rest.fal.ai` initiate endpoint with `storage_type=fal-cdn-v3`.
+- Direct `v3.fal.media` upload path with CDN auth token management.
+- Direct `fal.media` fallback repository.
+- Default repository chain: direct CDN v3, then direct `fal.media`, then REST presigned upload.
+- Proxy and malformed-credential configurations skip direct `fal.media` as an intermediate fallback and continue to REST presigned upload.
+- Multipart upload for large files on direct CDN v3.
 - Lifecycle duration validation before request construction.
 - Clean presigned PUT requests without Fal auth or lifecycle headers.
 - Invalid storage URL associated values redact signed query strings and fragments before being thrown.
@@ -111,10 +116,7 @@ Implemented:
 
 Still separate from this small chunk:
 
-- Direct `v3.fal.media` upload path with CDN auth token management.
-- Fallback repositories.
-- Multipart upload for large files.
-- DNS rebinding/private-DNS mitigation for public-looking storage hostnames, likely through an allowlist or preflight resolution policy.
+- DNS rebinding/private-DNS mitigation for public-looking storage hostnames is intentionally deferred unless a concrete threat or production issue appears. The package now uses an explicit Fal storage host allowlist.
 
 ## Realtime Parity
 
