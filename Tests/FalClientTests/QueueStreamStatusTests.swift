@@ -71,7 +71,8 @@ final class QueueStreamStatusTests: XCTestCase {
         let queue = QueueClient(client: client)
 
         do {
-            _ = try await queue.streamStatus("fal-ai/test", of: "request-id")
+            let stream = try await queue.streamStatus("fal-ai/test", of: "request-id")
+            for try await _ in stream {}
             XCTFail("Expected streamStatus to throw an HTTP error")
         } catch FalError.httpError(let error) {
             XCTAssertEqual(error.statusCode, 503)

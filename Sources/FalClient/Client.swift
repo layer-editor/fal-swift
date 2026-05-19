@@ -121,6 +121,25 @@ public struct RunOptions: RequestOptions, Sendable {
 
 public let DefaultRunOptions: RunOptions = .withMethod(.post)
 
+/// Options for direct model streaming endpoints.
+///
+/// Direct streaming is a `fal.run` SSE request and does not use the queue, so
+/// queue-only controls such as priority, runner hint, start timeout, and retry
+/// settings are intentionally not part of this type.
+public struct StreamOptions: Sendable {
+    /// Endpoint path appended to the model ID.
+    public let path: String
+    /// The timeout interval for the streaming HTTP request in seconds. Defaults to 60 seconds.
+    public let timeoutInterval: TimeInterval
+
+    public init(path: String = "/stream", timeoutInterval: TimeInterval = 60) {
+        self.path = path
+        self.timeoutInterval = timeoutInterval
+    }
+}
+
+public let DefaultStreamOptions = StreamOptions()
+
 public typealias OnQueueUpdate = (QueueStatus) -> Void
 public typealias OnQueueStatusDetailUpdate = (QueueStatusDetail) -> Void
 public typealias OnQueueEnqueue = (QueueSubmitResult) -> Void
@@ -171,6 +190,29 @@ public extension Client {
     ///   - options: The request options.
     func run(_ app: String, input: Payload? = nil, options: RunOptions = DefaultRunOptions) async throws -> Payload {
         try await run(app, input: input, options: options)
+    }
+
+    /// Streams progressive model output from the model's direct SSE endpoint.
+    ///
+    /// This uses `fal.run` directly and does not use the queue, so queue retry
+    /// semantics and queue-only platform controls do not apply.
+    func stream(
+        _ app: String,
+        input: Payload? = nil,
+        options: StreamOptions = DefaultStreamOptions
+    ) async throws -> AsyncThrowingStream<Payload, Error> {
+        var requestInput = input
+        if let input, input.hasBinaryData {
+            requestInput = try await storage.autoUpload(input: input)
+        }
+
+        let url = buildUrl(fromId: app, path: options.path)
+        let events = try await sendServerSentEvents(
+            to: url,
+            input: requestInput?.json(),
+            options: RunOptions(httpMethod: .post, timeoutInterval: options.timeoutInterval)
+        )
+        return decodeServerSentEventStream(events, as: Payload.self)
     }
 
     /// Submits a request to the given [app]. This method uses the [queue] API

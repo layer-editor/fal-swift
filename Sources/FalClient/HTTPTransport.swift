@@ -13,7 +13,7 @@ struct HTTPTransportEventStream {
     let errorData: Data
 }
 
-protocol HTTPTransport {
+protocol HTTPTransport: Sendable {
     func data(for request: URLRequest) async throws -> HTTPTransportResponse
     func serverSentEvents(for request: URLRequest) async throws -> HTTPTransportEventStream
 }
@@ -76,15 +76,22 @@ func serverSentEventStream<Lines: AsyncSequence>(
     })
 }
 
-private final class ServerSentEventParser<Lines: AsyncSequence>: @unchecked Sendable where Lines.Element == String {
+private actor ServerSentEventParser<Lines: AsyncSequence> where Lines.Element == String {
     private var iterator: Lines.AsyncIterator
     private var dataLines: [String] = []
+    private var isProducing = false
 
     init(lines: Lines) {
         self.iterator = lines.makeAsyncIterator()
     }
 
     func nextEvent() async throws -> Data? {
+        guard !isProducing else {
+            throw FalError.unsupportedOperation(message: "SSE streams are single-consumer sequences.")
+        }
+        isProducing = true
+        defer { isProducing = false }
+
         while let line = try await nextLine() {
             guard !line.isEmpty else {
                 if let event = serverSentEventData(from: dataLines) {

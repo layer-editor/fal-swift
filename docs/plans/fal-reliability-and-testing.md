@@ -14,6 +14,7 @@ Existing tests now cover helper behavior plus the first request, queue, storage,
 - `Tests/FalClientTests/StorageTests.swift`
 - `Tests/FalClientTests/HTTPTransportTests.swift`
 - `Tests/FalClientTests/PublicErrorTests.swift`
+- `Tests/FalClientTests/QueueStreamStatusTests.swift`
 
 Recently added request-option coverage:
 
@@ -21,6 +22,8 @@ Recently added request-option coverage:
 - Payload and typed queue submit options for `startTimeout`, `hint`, and queue `priority`.
 - Rich queue submit metadata through `Queue.submitDetailed(...)`.
 - Typed `subscribe(onEnqueue:)` callback metadata and custom queue fallback behavior.
+- Queue status SSE request construction, path escaping, `logs=1`, default query omission, decoding, heartbeat-tolerant parsing, and HTTP error payload preservation.
+- Direct model stream request construction, default and custom stream paths, client HTTP timeout, Payload and typed event decoding, HTTP error payload preservation, and typed binary input rejection before request construction.
 
 Remaining gaps:
 
@@ -145,6 +148,26 @@ Cases:
 - Do not retry `CancellationError`.
 - Do not retry fal user timeout responses with `X-Fal-Request-Timeout-Type: user`.
 - Preserve final response metadata in thrown errors.
+- Do not retry direct `/stream` requests; direct streaming is outside queue retry semantics.
+
+### SSE and Direct Streaming
+
+Files:
+
+- Modify: `Sources/FalClient/HTTPTransport.swift`
+- Modify: `Sources/FalClient/QueuePolling.swift` or a new generic streaming decoder file.
+- Modify: `Sources/FalClient/FalClient.swift`
+- Test: direct stream tests under `Tests/FalClientTests/`
+
+Acceptance:
+
+- [x] SSE parsing remains pull-driven by caller iteration, without eager producer tasks that can buffer unbounded events.
+- [x] Parser skips comments, heartbeat frames, and empty event delimiters without ending the stream early.
+- [x] Parser supports multiline `data:` fields and EOF after a final event without a trailing blank line.
+- [x] Non-2xx SSE responses preserve Fal HTTP error payloads using a bounded error body.
+- [x] `FalClient.stream(...)` sends a direct request to `fal.run`, defaults to `"/stream"`, and does not send queue-only platform headers.
+- [x] Payload and typed `Decodable` stream overloads decode each JSON event independently.
+- Tests use fake transports only and never make live Fal API calls.
 
 ### Platform Request Options
 

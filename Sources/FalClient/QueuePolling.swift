@@ -132,42 +132,7 @@ func queueResponseAfterStatusDetailPolling<Output: Decodable>(
 func decodeQueueStatusDetailStream(
     _ events: AsyncThrowingStream<Data, Error>
 ) -> AsyncThrowingStream<QueueStatusDetail, Error> {
-    let decoder = QueueStatusDetailStreamDecoder(events: events)
-    return AsyncThrowingStream(unfolding: {
-        try await decoder.nextUpdate()
-    })
-}
-
-private final class QueueStatusDetailStreamDecoder: @unchecked Sendable {
-    private var iterator: AsyncThrowingStream<Data, Error>.AsyncIterator
-    private let decoder = JSONDecoder()
-    private var isFinished = false
-
-    init(events: AsyncThrowingStream<Data, Error>) {
-        self.iterator = events.makeAsyncIterator()
-    }
-
-    func nextUpdate() async throws -> QueueStatusDetail? {
-        guard !isFinished else {
-            return nil
-        }
-        guard let event = try await nextEvent() else {
-            return nil
-        }
-
-        let update = try decoder.decode(QueueStatusDetail.self, from: event)
-        if update.isCompleted {
-            isFinished = true
-        }
-        return update
-    }
-
-    private func nextEvent() async throws -> Data? {
-        var iterator = self.iterator
-        let event = try await iterator.next()
-        self.iterator = iterator
-        return event
-    }
+    decodeServerSentEventStream(events, as: QueueStatusDetail.self, until: \.isCompleted)
 }
 
 func pollQueueStatusUntilCompleted(

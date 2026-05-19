@@ -1,7 +1,7 @@
 @testable import FalClient
 import Foundation
 
-final class RecordingHTTPTransport: HTTPTransport {
+final class RecordingHTTPTransport: HTTPTransport, @unchecked Sendable {
     private let handler: (URLRequest) throws -> HTTPTransportResponse
     private let eventStreamHandler: (URLRequest) throws -> HTTPTransportEventStream
     private(set) var requests: [URLRequest] = []

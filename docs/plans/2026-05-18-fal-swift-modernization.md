@@ -4,7 +4,9 @@
 
 **Goal:** Bring `FalClient` into practical parity with current fal model API clients while improving safety, testability, and Apple-platform ergonomics without refactoring for its own sake.
 
-**Architecture:** Keep the public facade small: `FalClient` plus `queue`, `storage`, `realtime`, and a new streaming surface. Add internal seams only where they pay for themselves: request construction, HTTP transport, queue polling/status streaming, and error metadata. Preserve current call sites first; introduce additive options and deprecations before removals.
+**Architecture:** Keep the public facade small: `FalClient` plus `queue`, `storage`, `realtime`, and a new streaming surface. Add internal seams only where they pay for themselves: request construction, HTTP transport, queue polling/status streaming, generic SSE event decoding, and error metadata. Preserve current call sites first; introduce additive options and deprecations before removals.
+
+**Streaming Architecture Rule:** SSE consumers should be pull-driven by the caller's `AsyncSequence` iteration, not eager producer tasks with unbounded buffering. Treat SSE as a protocol boundary: support comments/heartbeats, extra blank separators, multiline `data:` payloads, EOF after a final event, bounded non-2xx error bodies, and Fal HTTP error payload preservation.
 
 **Tech Stack:** Swift Package Manager, async/await, URLSession, Codable, XCTest or Swift Testing, mocked URLProtocol or internal HTTP transport for network tests.
 
@@ -16,7 +18,8 @@
 - [x] Created living planning docs under `docs/plans/`.
 - [x] Added initial characterization tests for current behavior and known bugs.
 - [x] Implemented queue/request parity gaps.
-- [ ] Implemented streaming/SSE support.
+- [x] Implemented shared SSE transport and queue status streaming.
+- [x] Implemented direct model `/stream` support.
 - [x] Hardened storage uploads and typed binary handling.
 - [ ] Updated README, sample docs, CI, and release metadata.
 
@@ -92,9 +95,11 @@ External references checked:
   - Add detail-aware subscribe callbacks so high-level subscribers can observe status metadata without manual `statusDetail` polling. `Payload` and typed `Decodable` `subscribeWithStatusDetails(...)` APIs are now available without changing existing `subscribe` trailing-closure behavior.
   - On client timeout or Swift task cancellation, attempt server-side cancel where a request ID is known. `Queue.cancel(...)` now uses the documented `PUT /requests/{request_id}/cancel` endpoint, and subscribe preserves the original timeout/cancellation error if server-side cancel fails.
 
-- [ ] Add `stream` support for model `/stream` endpoints.
+- [x] Add `stream` support for model `/stream` endpoints.
   - Direct `fal.run` SSE, not queue-backed.
   - Expose typed and `Payload` event decoding.
+  - Add a small internal generic SSE JSON decoder before the public API so queue status streaming and direct model streaming share stream semantics.
+  - Limit the public option surface to direct-stream controls: path and client HTTP timeout. Do not apply queue-only controls such as priority, start timeout, runner hint, or queue retry flags.
   - Document that queue retry semantics do not apply to direct streaming.
 
 - [ ] Fix endpoint parsing for namespaced endpoints.
@@ -118,6 +123,7 @@ External references checked:
   - Start with queue status/result and storage upload.
   - Avoid retrying Swift task cancellation and fal user timeout responses.
   - Match peer-client behavior only where it improves client-side network reliability; fal server-side queue retries are separate.
+  - Do not add retries to direct `/stream`; Fal documents streaming as a direct SSE request outside queue retry semantics.
 
 - [x] Make realtime state concurrency-safe.
   - Replaced the global mutable connection dictionary with a synchronized `RealtimeConnectionPool`.
@@ -173,6 +179,8 @@ External references checked:
 - 2026-05-18: Added polling-based `Queue.subscribeToStatus(...)` for observing an existing request through completion with `QueueStatusDetail` callbacks and no implicit cancellation of the observed request on observer timeout.
 - 2026-05-18: Ran branch simplification review and collapsed duplicated subscribe response polling, typed queue input conversion, queue polling loops, and overgrown `RunOptions` factory surfaces while preserving the canonical initializer for advanced request controls.
 - 2026-05-18: Added `Queue.streamStatus(...)` for queue status SSE updates, including request-id path encoding, `logs=1` support, and shared SSE parsing through the internal HTTP transport seam.
+- 2026-05-18: Updated streaming architecture guidance after queue status streaming review: pull-driven streams, bounded SSE error bodies, heartbeat/comment tolerance, shared generic event decoding before direct `/stream`, and explicit ownership semantics for queue observation versus request-owning subscribe flows.
+- 2026-05-18: Added direct `FalClient.stream(...)` support for model `/stream` SSE endpoints with narrow `StreamOptions`, Payload and typed event decoding, custom stream paths, client HTTP timeout, and fake-transport coverage for error payloads and typed binary input rejection.
 
 ## Non-Goals
 

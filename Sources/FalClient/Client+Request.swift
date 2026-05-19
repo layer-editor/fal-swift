@@ -33,19 +33,27 @@ extension Client {
 
     func sendServerSentEvents(
         to urlString: String,
+        input: Data? = nil,
         queryParams: [String: Any]? = nil,
         options: RunOptions
     ) async throws -> AsyncThrowingStream<Data, Error> {
-        let request = try makeRequest(
+        var request = try makeRequest(
             to: urlString,
             queryParams: queryParams,
             options: options,
             includeQueuePriority: false,
             accept: "text/event-stream"
         )
-        let transportResponse = try await resolvedHTTPTransport.serverSentEvents(for: request)
-        try checkResponseStatus(for: transportResponse.response, withData: transportResponse.errorData)
-        return transportResponse.events
+        if input != nil, options.httpMethod != .get {
+            request.httpBody = input
+        }
+        let stream = ServerSentEventRequestStream(
+            transport: resolvedHTTPTransport,
+            request: request
+        )
+        return AsyncThrowingStream(unfolding: {
+            try await stream.nextEvent()
+        })
     }
 
     private func makeRequest(
@@ -120,6 +128,52 @@ extension Client {
     }
 
     func checkResponseStatus(for response: URLResponse, withData data: Data) throws {
+        try checkHTTPResponseStatus(for: response, withData: data)
+    }
+
+    var userAgent: String {
+        let osVersion = ProcessInfo.processInfo.operatingSystemVersionString
+        return "fal.ai/swift-client 0.1.0 - \(osVersion)"
+    }
+}
+
+private actor ServerSentEventRequestStream {
+    private let transport: HTTPTransport
+    private let request: URLRequest
+    private var iterator: AsyncThrowingStream<Data, Error>.AsyncIterator?
+    private var isProducing = false
+
+    init(transport: HTTPTransport, request: URLRequest) {
+        self.transport = transport
+        self.request = request
+    }
+
+    func nextEvent() async throws -> Data? {
+        guard !isProducing else {
+            throw FalError.unsupportedOperation(message: "SSE streams are single-consumer sequences.")
+        }
+        isProducing = true
+        defer { isProducing = false }
+
+        if iterator == nil {
+            let transportResponse = try await transport.serverSentEvents(for: request)
+            try checkHTTPResponseStatus(
+                for: transportResponse.response,
+                withData: transportResponse.errorData
+            )
+            iterator = transportResponse.events.makeAsyncIterator()
+        }
+
+        guard var iterator else {
+            return nil
+        }
+        let event = try await iterator.next()
+        self.iterator = iterator
+        return event
+    }
+}
+
+private func checkHTTPResponseStatus(for response: URLResponse, withData data: Data) throws {
         guard response is HTTPURLResponse else {
             throw FalError.invalidResultFormat
         }
@@ -141,12 +195,6 @@ extension Client {
             )
             throw FalError.httpError(httpError)
         }
-    }
-
-    var userAgent: String {
-        let osVersion = ProcessInfo.processInfo.operatingSystemVersionString
-        return "fal.ai/swift-client 0.1.0 - \(osVersion)"
-    }
 }
 
 private extension RunOptions {

@@ -17,7 +17,7 @@ The Swift client has a useful core: direct `run`, queue-backed `subscribe`, manu
 | `queue.result` / response | Present | Present | P1 for typed response wrapper metadata |
 | `queue.cancel` | Missing | Documented and implemented in JS/Python | P1 |
 | `queue.streamStatus` | Missing | Documented SSE endpoint and implemented in JS/Java | P1 |
-| `stream` | Missing | Official method for `/stream` SSE endpoints | P1 |
+| `stream` | Present | Official method for `/stream` SSE endpoints | P1 |
 | realtime | Present | Needs custom path/token-provider parity and concurrency hardening | P1 |
 | platform headers | Mostly missing | `start_timeout`, `hint`, `priority`, custom headers, storage/retry/fallback controls | P1 |
 | namespaced endpoints | Fragile | Peer clients preserve namespace/path pieces | P1 |
@@ -65,18 +65,19 @@ Naming rule: docs should call out the difference between:
 
 ## Streaming API
 
-Current Swift has no direct SSE client for model `/stream` endpoints.
+Current Swift has shared SSE transport, queue status streaming, and direct model `/stream` support.
 
-Proposed first implementation:
+Implemented first surface:
 
-- New `Streaming.swift`.
+- Internal generic JSON SSE decoder shared by queue status streaming and direct model streaming.
 - `FalClient.stream(_ app: String, input: Payload?, options: StreamOptions = .init()) -> AsyncThrowingStream<Payload, Error>`.
 - `FalClient.stream<Event: Decodable>(...) -> AsyncThrowingStream<Event, Error>`.
 - Default path: `/stream`.
 - Direct `fal.run` subdomain, not `queue.fal.run`.
+- Public direct-stream options should be intentionally narrow: endpoint path and client HTTP timeout. Fal documents direct streaming as not supporting queue-only controls such as `hint`, `priority`, `start_timeout`, `client_timeout`, or custom queue headers.
 - Document that direct streaming does not get queue retries.
 
-Implementation note: this should reuse the new internal request builder and transport seams. Avoid building a second ad hoc HTTP stack.
+Implementation note: this should reuse the new internal request builder and transport seams. Avoid building a second ad hoc HTTP stack. Keep stream decoding pull-driven and cover SSE comments/heartbeats, blank separators, multiline `data:` payloads, EOF after a final event, bounded error bodies, and HTTP error payload preservation.
 
 ## Endpoint Parsing
 
