@@ -37,7 +37,7 @@ Planned shape:
 - `QueueSubmitResult`: `requestId`, `responseUrl`, `statusUrl`, `cancelUrl`, `queuePosition`.
 - `QueueStatus`: keep enum ergonomics, but preserve common metadata across states.
 - `Queue.cancel(_ id:of:) async throws`.
-- `Queue.streamStatus(...) -> AsyncThrowingStream<QueueStatus, Error>` or a small `FalStream` wrapper if cancellation/metadata need to be explicit.
+- `Queue.streamStatus(...) -> AsyncThrowingStream<QueueStatusDetail, Error>` backed by the queue status SSE endpoint.
 - `Queue.subscribeToStatus(...) async throws -> QueueStatusDetail` for polling an existing request to a completed status detail.
 - High-level `FalClient.subscribe` gains `onEnqueue`, options, timeout cancellation, and status-streaming mode later.
 

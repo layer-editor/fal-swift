@@ -16,6 +16,45 @@ extension Client {
         options: RunOptions,
         includeQueuePriority: Bool = true
     ) async throws -> Data {
+        var request = try makeRequest(
+            to: urlString,
+            queryParams: queryParams,
+            options: options,
+            includeQueuePriority: includeQueuePriority,
+            accept: "application/json"
+        )
+        if input != nil, options.httpMethod != .get {
+            request.httpBody = input
+        }
+        let transportResponse = try await resolvedHTTPTransport.data(for: request)
+        try checkResponseStatus(for: transportResponse.response, withData: transportResponse.data)
+        return transportResponse.data
+    }
+
+    func sendServerSentEvents(
+        to urlString: String,
+        queryParams: [String: Any]? = nil,
+        options: RunOptions
+    ) async throws -> AsyncThrowingStream<Data, Error> {
+        let request = try makeRequest(
+            to: urlString,
+            queryParams: queryParams,
+            options: options,
+            includeQueuePriority: false,
+            accept: "text/event-stream"
+        )
+        let transportResponse = try await resolvedHTTPTransport.serverSentEvents(for: request)
+        try checkResponseStatus(for: transportResponse.response, withData: transportResponse.errorData)
+        return transportResponse.events
+    }
+
+    private func makeRequest(
+        to urlString: String,
+        queryParams: [String: Any]?,
+        options: RunOptions,
+        includeQueuePriority: Bool,
+        accept: String
+    ) throws -> URLRequest {
         guard var url = URL(string: urlString) else {
             throw FalError.invalidUrl(url: urlString)
         }
@@ -43,12 +82,11 @@ extension Client {
 
         var request = URLRequest(url: url, timeoutInterval: options.timeoutInterval)
         request.httpMethod = options.httpMethod.rawValue.uppercased()
-        request.setValue("application/json", forHTTPHeaderField: "accept")
+        request.setValue(accept, forHTTPHeaderField: "accept")
         request.setValue("application/json", forHTTPHeaderField: "content-type")
         request.setValue(userAgent, forHTTPHeaderField: "user-agent")
         options.applyHeaders(to: &request, includeQueuePriority: includeQueuePriority)
 
-        // setup credentials if available
         if shouldApplyAuthorizationHeader {
             let credentials = config.credentials.rawValue
             if !credentials.isEmpty {
@@ -62,17 +100,11 @@ extension Client {
             }
         }
 
-        // setup the request proxy if available
         if config.requestProxy != nil {
             request.setValue(targetUrl.absoluteString, forHTTPHeaderField: "x-fal-target-url")
         }
 
-        if input != nil, options.httpMethod != .get {
-            request.httpBody = input
-        }
-        let transportResponse = try await resolvedHTTPTransport.data(for: request)
-        try checkResponseStatus(for: transportResponse.response, withData: transportResponse.data)
-        return transportResponse.data
+        return request
     }
 
     private var shouldApplyAuthorizationHeader: Bool {

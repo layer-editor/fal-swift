@@ -41,6 +41,11 @@ public protocol QueueCancellationProviding: Queue {
     func cancel(_ id: String, of requestId: String) async throws
 }
 
+public protocol QueueStatusStreamingProviding: Queue {
+    /// Streams detailed status updates for a queued request using Fal's status SSE endpoint.
+    func streamStatus(_ id: String, of requestId: String, includeLogs: Bool) async throws -> AsyncThrowingStream<QueueStatusDetail, Error>
+}
+
 public extension Queue {
     func submit(_ id: String, input: Payload? = nil, webhookUrl: String? = nil) async throws -> String {
         try await submit(id, input: input, webhookUrl: webhookUrl)
@@ -106,6 +111,20 @@ public extension Queue {
             onQueueStatusDetailUpdate: onQueueStatusDetailUpdate
         )
     }
+
+    /// Streams detailed status updates for an existing queued request until the stream ends or completes.
+    func streamStatus(
+        _ id: String,
+        of requestId: String,
+        includeLogs: Bool = false
+    ) async throws -> AsyncThrowingStream<QueueStatusDetail, Error> {
+        guard let provider = self as? QueueStatusStreamingProviding else {
+            throw FalError.unsupportedOperation(
+                message: "This Queue implementation does not support streaming queued request status."
+            )
+        }
+        return try await provider.streamStatus(id, of: requestId, includeLogs: includeLogs)
+    }
 }
 
 extension Queue {
@@ -135,7 +154,7 @@ extension Queue {
     }
 }
 
-public struct QueueClient: QueueStatusDetailProviding, QueueCancellationProviding {
+public struct QueueClient: QueueStatusDetailProviding, QueueCancellationProviding, QueueStatusStreamingProviding {
     public let client: Client
 
     public func submit(_ id: String, input: Payload?, webhookUrl: String?) async throws -> String {
@@ -169,6 +188,20 @@ public struct QueueClient: QueueStatusDetailProviding, QueueCancellationProvidin
             options: .route(queueRequestPath(for: requestId, suffix: "/status"), withMethod: .get)
         )
         return result
+    }
+
+    public func streamStatus(_ id: String, of requestId: String, includeLogs: Bool) async throws -> AsyncThrowingStream<QueueStatusDetail, Error> {
+        let url = buildUrl(
+            fromId: try ensureAppIdFormat(id),
+            path: queueRequestPath(for: requestId, suffix: "/status/stream"),
+            subdomain: "queue"
+        )
+        let events = try await client.sendServerSentEvents(
+            to: url,
+            queryParams: includeLogs ? ["logs": 1] : [:],
+            options: .withMethod(.get)
+        )
+        return decodeQueueStatusDetailStream(events)
     }
 
     public func cancel(_ id: String, of requestId: String) async throws {

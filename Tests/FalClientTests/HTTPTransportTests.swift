@@ -62,6 +62,43 @@ final class HTTPTransportTests: XCTestCase {
         ])
         XCTAssertEqual(transport.requests.last?.httpMethod, "PUT")
     }
+
+    func testServerSentEventParserYieldsDataEvents() async throws {
+        let lines = AsyncThrowingStream<String, Error> { continuation in
+            continuation.yield(": heartbeat")
+            continuation.yield("")
+            continuation.yield("data: {\"status\":\"IN_PROGRESS\"}")
+            continuation.yield("")
+            continuation.yield("data: {")
+            continuation.yield("data: \"status\":\"COMPLETED\"")
+            continuation.yield("data: }")
+            continuation.finish()
+        }
+        let events = AsyncThrowingStream<Data, Error> { continuation in
+            Task {
+                do {
+                    try await parseServerSentEvents(from: lines, yieldingTo: continuation)
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+        }
+
+        var decodedEvents: [String] = []
+        for try await event in events {
+            decodedEvents.append(String(data: event, encoding: .utf8) ?? "")
+        }
+
+        XCTAssertEqual(decodedEvents, [
+            #"{"status":"IN_PROGRESS"}"#,
+            """
+            {
+            "status":"COMPLETED"
+            }
+            """,
+        ])
+    }
 }
 
 private struct TransportTestClient: Client, HTTPTransportProviding {

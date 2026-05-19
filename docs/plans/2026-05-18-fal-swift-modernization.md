@@ -87,7 +87,7 @@ External references checked:
   - Add rich submit result or handle: `requestId`, `responseUrl`, `statusUrl`, `cancelUrl`, queue position when available. `Queue.submitDetailed(...)` now returns `QueueSubmitResult` while preserving existing `submit -> String`.
   - Add `cancel`.
   - Add `subscribeToStatus`. `Queue.subscribeToStatus(...)` now observes an existing request until completion and returns the final `QueueStatusDetail` without taking ownership of server-side cancellation.
-  - Add `streamStatus` using the queue status SSE endpoint.
+  - Add `streamStatus` using the queue status SSE endpoint. `Queue.streamStatus(...)` now exposes Fal's `/requests/{request_id}/status/stream` SSE endpoint as an `AsyncThrowingStream<QueueStatusDetail, Error>`.
   - Add `onEnqueue` to high-level `subscribe`. Payload and typed subscribe overloads can now receive `QueueSubmitResult` after enqueue.
   - Add detail-aware subscribe callbacks so high-level subscribers can observe status metadata without manual `statusDetail` polling. `Payload` and typed `Decodable` `subscribeWithStatusDetails(...)` APIs are now available without changing existing `subscribe` trailing-closure behavior.
   - On client timeout or Swift task cancellation, attempt server-side cancel where a request ID is known. `Queue.cancel(...)` now uses the documented `PUT /requests/{request_id}/cancel` endpoint, and subscribe preserves the original timeout/cancellation error if server-side cancel fails.
@@ -172,6 +172,7 @@ External references checked:
 - 2026-05-18: Added `QueueSubmitResult`, `Queue.submitDetailed(...)`, and high-level `subscribe(onEnqueue:)` overloads so callers can observe request/status/response/cancel URLs and queue position when Fal returns them.
 - 2026-05-18: Added polling-based `Queue.subscribeToStatus(...)` for observing an existing request through completion with `QueueStatusDetail` callbacks and no implicit cancellation of the observed request on observer timeout.
 - 2026-05-18: Ran branch simplification review and collapsed duplicated subscribe response polling, typed queue input conversion, queue polling loops, and overgrown `RunOptions` factory surfaces while preserving the canonical initializer for advanced request controls.
+- 2026-05-18: Added `Queue.streamStatus(...)` for queue status SSE updates, including request-id path encoding, `logs=1` support, and shared SSE parsing through the internal HTTP transport seam.
 
 ## Non-Goals
 
