@@ -119,7 +119,7 @@ Cases:
 - Swift task cancellation during polling should attempt queue cancel and still surface cancellation to the caller. Covered for typed subscribe.
 - Cancel failure should not hide the original timeout/cancellation unless cancellation was the user-requested operation. Covered for typed subscribe timeout.
 - Successful completion should not cancel. Covered for typed subscribe.
-- Remaining: add explicit coverage for payload `FalClient.subscribe` and `subscribeWithStatusDetails` timeout/cancellation paths.
+- Payload `subscribe` and `subscribeWithStatusDetails` now have explicit timeout, task-cancellation, cancel-failure, and concrete queue option-dispatch coverage.
 
 ### Queue Enqueue Metadata
 

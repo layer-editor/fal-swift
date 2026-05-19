@@ -237,7 +237,7 @@ public extension Client {
         includeLogs: Bool = false,
         onQueueUpdate: OnQueueUpdate? = nil
     ) async throws -> Payload {
-        let requestId = try await queue.submit(app, input: input, options: options)
+        let requestId = try await queue.submit(app, input: input, webhookUrl: nil, options: options)
         return try await queueResponseAfterPolling(
             queue: queue,
             app: app,
@@ -259,7 +259,7 @@ public extension Client {
         onEnqueue: @escaping OnQueueEnqueue,
         onQueueUpdate: OnQueueUpdate? = nil
     ) async throws -> Payload {
-        let submitResult = try await queue.submitDetailed(app, input: input, options: options)
+        let submitResult = try await queue.submitDetailed(app, input: input, webhookUrl: nil, options: options)
         onEnqueue(submitResult)
         return try await queueResponseAfterPolling(
             queue: queue,
@@ -285,7 +285,7 @@ public extension Client {
         includeLogs: Bool = false,
         onQueueStatusDetailUpdate: @escaping OnQueueStatusDetailUpdate
     ) async throws -> Payload {
-        let requestId = try await queue.submit(app, input: input, options: options)
+        let requestId = try await queue.submit(app, input: input, webhookUrl: nil, options: options)
         return try await queueResponseAfterStatusDetailPolling(
             queue: queue,
             app: app,

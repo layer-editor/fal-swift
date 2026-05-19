@@ -222,6 +222,145 @@ final class CodableSubscribeTests: XCTestCase {
         XCTAssertEqual(updates.map(\.requestId), ["request-id", "request-id"])
     }
 
+    func testPayloadSubscribeCancelsQueueRequestOnTimeout() async throws {
+        let queue = StubQueue(statuses: [
+            .inQueue(position: 1, responseUrl: "https://example.com/result"),
+        ])
+        let client = StubClient(queue: queue)
+
+        do {
+            _ = try await client.subscribe(
+                to: "fal-ai/test",
+                input: nil as Payload?,
+                options: RunOptions(startTimeout: 20, hint: "payload-runner", queuePriority: .low),
+                pollInterval: .milliseconds(250),
+                timeout: .milliseconds(30)
+            )
+            XCTFail("Expected payload subscribe to time out")
+        } catch FalError.queueTimeout(let requestId) {
+            XCTAssertEqual(requestId, "request-id")
+            XCTAssertEqual(queue.cancelledRequests, [
+                QueueCancelRequest(app: "fal-ai/test", requestId: "request-id"),
+            ])
+            XCTAssertEqual(queue.submittedOptionStartTimeouts, [20])
+            XCTAssertEqual(queue.submittedOptionHints, ["payload-runner"])
+            XCTAssertEqual(queue.submittedOptionPriorities, [.low])
+        }
+    }
+
+    func testPayloadSubscribeOnEnqueueOptionsUseConcreteQueueSubmitImplementation() async throws {
+        let queue = StubQueue(statuses: [
+            .completed(logs: [], responseUrl: "https://example.com/result"),
+        ])
+        let client = StubClient(queue: queue)
+        var enqueueResult: QueueSubmitResult?
+
+        let output = try await client.subscribe(
+            to: "fal-ai/test",
+            input: nil as Payload?,
+            options: RunOptions(startTimeout: 15, hint: "payload-enqueue", queuePriority: .normal),
+            pollInterval: .milliseconds(10),
+            timeout: .milliseconds(250),
+            onEnqueue: { enqueueResult = $0 }
+        )
+
+        XCTAssertEqual(output["value"], "ok")
+        XCTAssertEqual(enqueueResult, QueueSubmitResult(requestId: "request-id"))
+        XCTAssertEqual(queue.submitCallCount, 1)
+        XCTAssertEqual(queue.submittedOptionStartTimeouts, [15])
+        XCTAssertEqual(queue.submittedOptionHints, ["payload-enqueue"])
+        XCTAssertEqual(queue.submittedOptionPriorities, [.normal])
+    }
+
+    func testPayloadSubscribeWithStatusDetailsOptionsUseConcreteQueueSubmitImplementation() async throws {
+        let queue = StubQueue(statusDetails: [
+            QueueStatusDetail(
+                status: .completed(logs: [], responseUrl: "https://example.com/result"),
+                requestId: "request-id",
+                responseUrl: "https://example.com/result"
+            ),
+        ])
+        let client = StubClient(queue: queue)
+
+        let output = try await client.subscribeWithStatusDetails(
+            to: "fal-ai/test",
+            input: nil as Payload?,
+            options: RunOptions(startTimeout: 25, hint: "payload-detail", queuePriority: .low),
+            pollInterval: .milliseconds(10),
+            timeout: .milliseconds(250),
+            onQueueStatusDetailUpdate: { _ in }
+        )
+
+        XCTAssertEqual(output["value"], "ok")
+        XCTAssertEqual(queue.submitCallCount, 1)
+        XCTAssertEqual(queue.submittedOptionStartTimeouts, [25])
+        XCTAssertEqual(queue.submittedOptionHints, ["payload-detail"])
+        XCTAssertEqual(queue.submittedOptionPriorities, [.low])
+    }
+
+    func testPayloadSubscribeWithStatusDetailsCancelsQueueRequestOnTaskCancellation() async throws {
+        let queue = StubQueue(
+            statusDetails: [
+                QueueStatusDetail(
+                    status: .inQueue(position: 1, responseUrl: "https://example.com/result"),
+                    requestId: "request-id",
+                    responseUrl: "https://example.com/result"
+                ),
+            ],
+            statusDelay: .milliseconds(250)
+        )
+        let client = StubClient(queue: queue)
+
+        let task = Task {
+            _ = try await client.subscribeWithStatusDetails(
+                to: "fal-ai/test",
+                input: nil as Payload?,
+                pollInterval: .milliseconds(10),
+                timeout: .seconds(5),
+                onQueueStatusDetailUpdate: { _ in }
+            )
+        }
+        try await DispatchTimeInterval.milliseconds(30).sleep()
+        task.cancel()
+
+        do {
+            try await task.value
+            XCTFail("Expected payload status-detail subscribe to be cancelled")
+        } catch is CancellationError {
+            XCTAssertEqual(queue.cancelledRequests, [
+                QueueCancelRequest(app: "fal-ai/test", requestId: "request-id"),
+            ])
+        }
+    }
+
+    func testPayloadSubscribeWithStatusDetailsPreservesTimeoutWhenQueueCancelFails() async throws {
+        let queue = StubQueue(
+            statusDetails: [
+                QueueStatusDetail(
+                    status: .inQueue(position: 1, responseUrl: "https://example.com/result"),
+                    requestId: "request-id",
+                    responseUrl: "https://example.com/result"
+                ),
+            ],
+            cancelError: FalError.invalidResultFormat
+        )
+        let client = StubClient(queue: queue)
+
+        do {
+            _ = try await client.subscribeWithStatusDetails(
+                to: "fal-ai/test",
+                input: nil as Payload?,
+                pollInterval: .milliseconds(250),
+                timeout: .milliseconds(30),
+                onQueueStatusDetailUpdate: { _ in }
+            )
+            XCTFail("Expected payload status-detail subscribe to time out")
+        } catch FalError.queueTimeout(let requestId) {
+            XCTAssertEqual(requestId, "request-id")
+            XCTAssertEqual(queue.cancelledRequests.count, 1)
+        }
+    }
+
     func testSubscribeTrailingClosureRemainsQueueStatusCallback() async throws {
         let queue = StubQueue(statuses: [
             .inQueue(position: 1, responseUrl: "https://example.com/result"),
@@ -485,10 +624,19 @@ private final class StubQueue: Queue, @unchecked Sendable {
     }
 
     func submit(_ id: String, input: Payload?, webhookUrl: String?, options: RunOptions) async throws -> String {
+        submitCallCount += 1
         submittedOptionStartTimeouts.append(options.startTimeout)
         submittedOptionHints.append(options.hint)
         submittedOptionPriorities.append(options.queuePriority)
         return "request-id"
+    }
+
+    func submitDetailed(_ id: String, input: Payload?, webhookUrl: String?) async throws -> QueueSubmitResult {
+        QueueSubmitResult(requestId: try await submit(id, input: input, webhookUrl: webhookUrl))
+    }
+
+    func submitDetailed(_ id: String, input: Payload?, webhookUrl: String?, options: RunOptions) async throws -> QueueSubmitResult {
+        QueueSubmitResult(requestId: try await submit(id, input: input, webhookUrl: webhookUrl, options: options))
     }
 
     func status(_ id: String, of requestId: String, includeLogs: Bool) async throws -> QueueStatus {
