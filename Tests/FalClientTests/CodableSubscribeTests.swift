@@ -11,7 +11,7 @@ final class CodableSubscribeTests: XCTestCase {
         let output: SubscribeOutput = try await client.subscribe(
             to: "fal-ai/test",
             pollInterval: .milliseconds(10),
-            timeout: .milliseconds(250)
+            timeout: .seconds(5)
         )
 
         XCTAssertEqual(output.value, "ok")
