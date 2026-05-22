@@ -7,7 +7,7 @@ import SwiftMsgpack
 ///
 /// It supports binary data as well, so it can be kept and transformed if needed
 /// before it's encoded to JSON or any other supported format (e.g. msgpack).
-public enum Payload: Codable {
+public enum Payload: Codable, Sendable {
     case string(String)
     case int(Int)
     case bool(Bool)

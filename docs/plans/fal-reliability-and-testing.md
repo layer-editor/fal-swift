@@ -1,0 +1,277 @@
+# Reliability and Testing Plan
+
+This document tracks correctness risks and the targeted tests needed before broad API work. The goal is confidence, not a large test suite for its own sake.
+
+Use [Reference Sources](../reference-sources.md) when updating tests for queue, streaming, realtime, storage, model catalog, or error behavior. Tests should encode Swift package behavior, but expectations should be checked against Fal's canonical docs and the peer Python/JavaScript clients when parity matters.
+
+## Current Test Baseline
+
+Existing tests now cover helper behavior plus the first request, queue, storage, and error hardening slices:
+
+- `Tests/FalClientTests/TimeoutSpec.swift`
+- `Tests/FalClientTests/UtilitySpec.swift`
+- `Tests/FalClientTests/CodableSubscribeTests.swift`
+- `Tests/FalClientTests/ClientRequestTests.swift`
+- `Tests/FalClientTests/QueueStatusTests.swift`
+- `Tests/FalClientTests/StorageTests.swift`
+- `Tests/FalClientTests/HTTPTransportTests.swift`
+- `Tests/FalClientTests/PublicErrorTests.swift`
+- `Tests/FalClientTests/QueueStreamStatusTests.swift`
+
+Recently added request-option coverage:
+
+- Direct `run` platform headers and named-option precedence over raw headers.
+- Payload and typed queue submit options for `startTimeout`, `hint`, and queue `priority`.
+- Rich queue submit metadata through `Queue.submitDetailed(...)`.
+- Typed `subscribe(onEnqueue:)` callback metadata and custom queue fallback behavior.
+- Queue status SSE request construction, path escaping, `logs=1`, default query omission, decoding, heartbeat-tolerant parsing, and HTTP error payload preservation.
+- Direct model stream request construction, default and custom stream paths, client HTTP timeout, Payload and typed event decoding, HTTP error payload preservation, and typed binary input rejection before request construction.
+- Reserved namespace endpoint parsing for `workflows/...` and `comfy/...`, including submit path preservation and namespace/owner/alias queue-base construction for status, stream-status, response, and cancel.
+- Storage upload options for generated/default file names, sanitized custom file names, uploaded-file lifecycle headers on initiate, and clean presigned PUT headers/body.
+- Object lifecycle durations are rejected before request construction when they are non-finite or not greater than zero.
+
+Remaining gaps and decisions:
+
+- Public transport injection for downstream package tests; the current seam is intentionally internal.
+- 422 validation payload message behavior for structured `detail` arrays.
+- Storage upload host trust policy beyond client-side URL rejection, especially DNS names that resolve to private IPs.
+- Public retry knobs are intentionally deferred until a concrete caller need appears. Current retry behavior remains fixed and internal.
+
+## Test Infrastructure First
+
+Add one of these before feature work:
+
+1. Internal `HTTPTransport` protocol plus fake transport.
+2. `URLProtocol` backed test session injection.
+
+Implemented: internal `HTTPTransport` plus fake transport for request/response unit tests. One public-surface error test still uses `URLProtocol` because the transport seam is not public.
+
+## P0 Tests
+
+### Typed Subscribe Timeout
+
+Files:
+
+- Modify: `Sources/FalClient/Client+Codable.swift`
+- Test: new queue subscribe test file under `Tests/FalClientTests/`
+
+Expected failing behavior:
+
+- A typed subscription with a 3 second timeout and 1 second poll interval should poll about three times.
+- Current code accumulates elapsed time incorrectly and can timeout early as polling continues.
+
+Acceptance:
+
+- Typed and untyped `subscribe` share the same deadline logic.
+- Both use monotonic deadline math and capped sleeps.
+- Cancellation is checked between polls.
+- A status call that does not observe cancellation cannot hold the subscribe call past the local timeout.
+
+### Queue Query Parameters
+
+Files:
+
+- Modify: `Sources/FalClient/Queue.swift`
+- Test: request builder or queue client test.
+
+Expected failing behavior:
+
+- GET queue requests build merged `queryParams` but send only `params`.
+
+Acceptance:
+
+- GET input-derived query parameters and explicit query parameters are both sent.
+- Explicit params win on key collision, matching current merge intent.
+
+### Queue Status Decoding
+
+Files:
+
+- Modify: `Sources/FalClient/QueueStatus.swift`
+- Test: queue status decoding tests.
+
+Fixtures:
+
+- `IN_QUEUE` with `request_id`, `queue_position`, `response_url`, `status_url`, `cancel_url`.
+- `IN_PROGRESS` with logs containing `message` and `timestamp` only.
+- `COMPLETED` with logs, `metrics.inference_time`, `error`, and `error_type`.
+
+Acceptance:
+
+- Decoding is tolerant of missing log level labels.
+- Known metadata is preserved.
+- Unknown future fields do not fail decoding.
+- High-level subscribers can opt into `subscribeWithStatusDetails(...)` for status metadata without breaking existing `subscribe` trailing-closure call sites.
+- Existing queued requests can be observed with `Queue.subscribeToStatus(...)`, including status detail callbacks and final metadata, without cancelling the server-side request if the observer times out.
+
+## P1 Tests
+
+### Cancellation
+
+Files:
+
+- Modify: `Sources/FalClient/Queue.swift`
+- Modify: `Sources/FalClient/FalClient.swift`
+- Modify: `Sources/FalClient/Client+Codable.swift`
+
+Cases:
+
+- `subscribe` timeout after `submit` should call queue cancel if request ID is known. Covered for typed subscribe.
+- Swift task cancellation during polling should attempt queue cancel and still surface cancellation to the caller. Covered for typed subscribe.
+- Cancel failure should not hide the original timeout/cancellation unless cancellation was the user-requested operation. Covered for typed subscribe timeout.
+- Successful completion should not cancel. Covered for typed subscribe.
+- Payload `subscribe` and `subscribeWithStatusDetails` now have explicit timeout, task-cancellation, cancel-failure, and concrete queue option-dispatch coverage.
+
+### Queue Enqueue Metadata
+
+Files:
+
+- Modify: `Sources/FalClient/Queue.swift`
+- Modify: `Sources/FalClient/Queue+Codable.swift`
+- Modify: `Sources/FalClient/Client.swift`
+- Modify: `Sources/FalClient/Client+Codable.swift`
+
+Acceptance:
+
+- Existing `submit -> String` remains source-compatible.
+- `submitDetailed` preserves `requestId`, `responseUrl`, `statusUrl`, `cancelUrl`, and `queuePosition` when present.
+- `QueueSubmitResult` is constructible by downstream queue conformers and tests.
+- `subscribe(onEnqueue:)` fires after submit and before polling.
+- Custom queues that only implement the original submit contract still get a synthesized enqueue result instead of falling through to the network-backed default path.
+
+### Retry Policy
+
+Files:
+
+- Added: `Sources/FalClient/RetryPolicy.swift`
+- Modified: `Sources/FalClient/Client+Request.swift`, `Sources/FalClient/Queue.swift`, `Sources/FalClient/Queue+Codable.swift`, `Sources/FalClient/Storage.swift`
+
+Cases:
+
+- [x] Retry transient transport errors for queue result/response.
+- [x] Retry selected ingress/status codes for queue status/result calls.
+- [x] Retry transient presigned storage PUT failures.
+- [x] Do not retry storage upload initiate because it creates upload state and has no idempotency key.
+- [x] Do not retry `CancellationError` or `URLError.cancelled`.
+- [x] Do not retry fal user timeout responses with `X-Fal-Request-Timeout-Type: user`.
+- [x] Preserve final response metadata in thrown errors.
+- [x] Cap retry attempts and use bounded cancellation-aware backoff, with bounded numeric `Retry-After` handling.
+- [x] Do not retry direct `/stream` requests; direct streaming is outside queue retry semantics.
+
+### SSE and Direct Streaming
+
+Files:
+
+- Modify: `Sources/FalClient/HTTPTransport.swift`
+- Modify: `Sources/FalClient/QueuePolling.swift` or a new generic streaming decoder file.
+- Modify: `Sources/FalClient/FalClient.swift`
+- Test: direct stream tests under `Tests/FalClientTests/`
+
+Acceptance:
+
+- [x] SSE parsing remains pull-driven by caller iteration, without eager producer tasks that can buffer unbounded events.
+- [x] Parser skips comments, heartbeat frames, and empty event delimiters without ending the stream early.
+- [x] Parser supports multiline `data:` fields and EOF after a final event without a trailing blank line.
+- [x] Non-2xx SSE responses preserve Fal HTTP error payloads using a bounded error body.
+- [x] `FalClient.stream(...)` sends a direct request to `fal.run`, defaults to `"/stream"`, and does not send queue-only platform headers.
+- [x] Payload and typed `Decodable` stream overloads decode each JSON event independently.
+- Tests use fake transports only and never make live Fal API calls.
+
+### Platform Request Options
+
+Files:
+
+- Modify: `Sources/FalClient/Client.swift`
+- Modify: `Sources/FalClient/Client+Request.swift`
+- Modify: `Sources/FalClient/Queue.swift`
+- Modify: `Sources/FalClient/Queue+Codable.swift`
+
+Acceptance:
+
+- Raw `headers` are applied to outbound requests.
+- Named options set the documented fal platform headers and override raw values for the same platform header.
+- Direct `run` supports `startTimeout`, `hint`, retry disable, I/O storage, object lifecycle, fallback disable, and raw headers.
+- Queue `submit` supports those shared controls plus `queuePriority`.
+
+### Error Metadata
+
+Files:
+
+- Modify: `Sources/FalClient/FalError.swift`
+- Modify: `Sources/FalClient/Client+Request.swift`
+
+Cases:
+
+- 422 model validation response preserves payload.
+- 503 with `X-Fal-Error-Type` exposes machine-readable error type.
+- 504 with `X-Fal-Request-Timeout-Type: user` exposes timeout type.
+- `x-fal-request-id` is exposed when present.
+- Non-Fal diagnostic headers are not exposed on public HTTP errors.
+- Invalid URL descriptions redact credentials, query strings, and fragments.
+
+### Storage Uploads
+
+Files:
+
+- Modify: `Sources/FalClient/Storage.swift`
+- Modify: `Sources/FalClient/Queue+Codable.swift`
+- Modify: `Sources/FalClient/Client+Codable.swift`
+
+Cases:
+
+- Top-level `Payload.data` uploads.
+- Nested dictionary and array data uploads recursively. Covered by `StorageTests`.
+- Invalid upload URL throws instead of crashing and rejects malformed, hostless, loopback, private, trailing-dot loopback, IPv4-mapped IPv6 loopback, numeric/hex/octal loopback, and invalid returned file URLs.
+- Upload initiation uses `rest.fal.ai` with `storage_type=fal-cdn-v3`, generated file names by default, custom sanitized file names when requested, and upload lifecycle headers only on the initiate request.
+- Default uploads use direct Fal CDN v3 first, then direct `fal.media`, then REST presigned upload. This matches the current Fal client direction and prioritizes the fast CDN path for media-heavy app workflows.
+- Direct `fal.media` is skipped as an intermediate default fallback when `requestProxy` is configured or credentials cannot authorize it, preserving proxy credential protection and letting REST presigned fallback run.
+- Direct CDN v3 uploads use multipart automatically above the configured threshold. Multipart failures remain terminal after part upload starts because falling back would re-upload a partially completed multipart object.
+- Small direct upload failures can fall through to the configured fallback repository, which may leave an orphaned object if the server accepted bytes but failed before returning a response. This is an intentional resilience tradeoff and mirrors peer-client behavior.
+- Presigned PUT requests keep the original body, content type, content length, and do not receive Fal authorization or lifecycle headers.
+- Invalid object lifecycle durations throw before any request is sent.
+- Invalid storage URL associated values redact signed query strings and fragments before being thrown.
+- Built-in URLSession storage PUTs reject unsafe redirects before following them; fake/custom transports still get final response URL validation as a compatibility fallback.
+- Safe 307 storage redirects are allowed by the URLSession transport while preserving PUT method and content type.
+- IPv4-compatible and hex IPv4-mapped IPv6 loopback aliases are rejected.
+- Typed `Encodable` containing `Data` throws a documented unsupported-input error before sending base64 JSON accidentally. Covered for typed `run` and typed `queue.submit`, including custom `encode(to:)` implementations.
+- `Payload.data` is rejected for GET queue requests before query serialization.
+- POST payload auto-upload is exercised through the `Storage` protocol extension so custom storage conformers are covered.
+
+## Realtime Reliability
+
+Current risks:
+
+- The global connection pool is now protected by `RealtimeConnectionPool`.
+- `WebSocketConnection` mutable state is now serialized through one state queue.
+- `WebSocketConnection` now has an internal fakeable WebSocket task boundary.
+- Token refresh now uses the current realtime token endpoint and fails closed on malformed token JSON.
+- Remaining risk: the realtime implementation still uses a queue-backed class rather than an actor, and token refresh is internal-only.
+
+Plan:
+
+- Fake WebSocket/session boundary tests now cover connection open, queued send flush, FIFO queued sends, receive errors, close behavior, and close-during-token-refresh behavior.
+- Consider an actor-based connection implementation if the session boundary is refactored more deeply.
+- Keep public realtime API stable while making token refresh and lifecycle behavior stricter.
+
+## Build and Test Commands
+
+Use targeted commands by default:
+
+```bash
+swift test --filter UtilitySpec
+swift test --filter TimeoutSpec
+swift test --filter QueueStatus
+swift test --filter QueueRequest
+swift test --filter Storage
+```
+
+Run the whole package only when touching shared transport, package configuration, or public API:
+
+```bash
+swift test
+swift build --target FalClient --configuration release
+```
+
+## References
+
+- [Canonical Fal and peer package sources](../reference-sources.md)

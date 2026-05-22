@@ -1,19 +1,34 @@
-
 import Dispatch
 import Foundation
 import SwiftMsgpack
 
 func throttle<T>(_ function: @escaping (T) -> Void, throttleInterval: DispatchTimeInterval) -> ((T) -> Void) {
-    var lastExecution = DispatchTime.now()
+    let state = ThrottleState()
 
     let throttledFunction: ((T) -> Void) = { input in
-        if DispatchTime.now() > lastExecution + throttleInterval {
-            lastExecution = DispatchTime.now()
+        if state.shouldExecute(throttleInterval: throttleInterval) {
             function(input)
         }
     }
 
     return throttledFunction
+}
+
+private final class ThrottleState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var lastExecution = DispatchTime.now()
+
+    func shouldExecute(throttleInterval: DispatchTimeInterval) -> Bool {
+        lock.lock()
+        defer {
+            lock.unlock()
+        }
+        guard DispatchTime.now() > lastExecution + throttleInterval else {
+            return false
+        }
+        lastExecution = DispatchTime.now()
+        return true
+    }
 }
 
 public enum FalRealtimeError: Error {
@@ -69,9 +84,9 @@ func hasBinaryField(_ type: Encodable) -> Bool {
 
 /// The real-time connection. This is used to send messages to the app, which will send
 /// responses back to the `connect` result completion callback.
-public class BaseRealtimeConnection<Input: Encodable> {
-    var sendReference: SendFunction
-    var closeReference: CloseFunction
+public class BaseRealtimeConnection<Input: Encodable>: @unchecked Sendable {
+    let sendReference: SendFunction
+    let closeReference: CloseFunction
 
     init(_ send: @escaping SendFunction, _ close: @escaping CloseFunction) {
         sendReference = send
@@ -110,10 +125,10 @@ public class BaseRealtimeConnection<Input: Encodable> {
 }
 
 /// Connection implementation that can be used to send messages using the `Payload` type.
-public class RealtimeConnection: BaseRealtimeConnection<Payload> {}
+public class RealtimeConnection: BaseRealtimeConnection<Payload>, @unchecked Sendable {}
 
 /// Connection implementation that can be used to send messages using a custom `Encodable` type.
-public class TypedRealtimeConnection<Input: Encodable>: BaseRealtimeConnection<Input> {}
+public class TypedRealtimeConnection<Input: Encodable>: BaseRealtimeConnection<Input>, @unchecked Sendable {}
 
 /// This is a list of apps deployed before formal realtime support. Their URLs follow
 /// a different pattern and will be kept here until we fully sunset them.
@@ -126,11 +141,10 @@ let LegacyApps = [
     "sd-turbo-real-time-high-fps-msgpack",
 ]
 
-func buildRealtimeUrl(forApp app: String, token: String? = nil) -> URL {
+func buildRealtimeUrl(forApp app: String, path requestedPath: String? = nil, token: String? = nil) throws -> URL {
     // Some basic support for old ids, this should be removed during 1.0.0 release
     // For full-support of old ids, users can point to version 0.4.x
-    let appAlias = (try? appAlias(fromId: app)) ?? app
-    let path = LegacyApps.contains(appAlias) || !app.contains("/") ? "/ws" : "/realtime"
+    let path = try realtimePath(forApp: app, requestedPath: requestedPath)
     guard var components = URLComponents(string: buildUrl(fromId: app, path: path)) else {
         preconditionFailure("Invalid URL. This is unexpected and likely a problem in the client library.")
     }
@@ -143,75 +157,224 @@ func buildRealtimeUrl(forApp app: String, token: String? = nil) -> URL {
     return components.url!
 }
 
-typealias RefreshTokenFunction = (String, (Result<String, Error>) -> Void) -> Void
+private func realtimePath(forApp app: String, requestedPath: String?) throws -> String? {
+    if let requestedPath {
+        return try normalizedRealtimePath(requestedPath)
+    }
 
-private let TokenExpirationInterval: DispatchTimeInterval = .minutes(1)
+    let appAlias = (try? appAlias(fromId: app)) ?? app
+    if LegacyApps.contains(appAlias) || !app.contains("/") {
+        return "/ws"
+    }
+    if (try? AppId.parse(id: app).path) != nil {
+        return nil
+    }
+    return "/realtime"
+}
+
+private func normalizedRealtimePath(_ path: String) throws -> String {
+    let trimmedPath = path.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmedPath.isEmpty,
+          !trimmedPath.contains("?"),
+          !trimmedPath.contains("#"),
+          !trimmedPath.contains("\\")
+    else {
+        throw FalRealtimeError.invalidInput
+    }
+
+    let components = URLComponents(string: trimmedPath)
+    guard components?.scheme == nil, components?.host == nil else {
+        throw FalRealtimeError.invalidInput
+    }
+
+    let lowercasedPath = trimmedPath.lowercased()
+    guard !lowercasedPath.contains("%2f"), !lowercasedPath.contains("%5c") else {
+        throw FalRealtimeError.invalidInput
+    }
+
+    let segments = trimmedPath.trimmingRealtimeSlashes.split(separator: "/", omittingEmptySubsequences: false)
+    guard !segments.isEmpty,
+          segments.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." })
+    else {
+        throw FalRealtimeError.invalidInput
+    }
+
+    return "/" + segments.joined(separator: "/")
+}
+
+private func realtimeTokenAppIdentifier(forApp app: String, path requestedPath: String?) throws -> String {
+    let appPath = ((try? AppId.parse(id: app).endpointPath) ?? app).trimmingRealtimeSlashes
+    guard let path = try realtimePath(forApp: app, requestedPath: requestedPath)?.trimmingRealtimeSlashes,
+          !path.isEmpty
+    else {
+        return appPath
+    }
+    return "\(appPath)/\(path)"
+}
+
+private extension String {
+    var trimmingRealtimeSlashes: String {
+        trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    }
+}
+
+typealias RefreshTokenFunction = @Sendable (String, String?, @escaping @Sendable (Result<String, Error>) -> Void) -> Void
+
+private let TokenDurationSeconds = 300
+private let TokenRefreshLeadTimeSeconds = 30
 
 typealias WebSocketMessage = URLSessionWebSocketTask.Message
 
-class WebSocketConnection: NSObject, URLSessionWebSocketDelegate {
+private struct RealtimeEndpointIdentity {
     let app: String
+    let path: String?
+
+    var poolKeyPath: String {
+        path ?? ""
+    }
+}
+
+private func realtimeEndpointIdentity(forApp app: String, path requestedPath: String?) throws -> RealtimeEndpointIdentity {
+    RealtimeEndpointIdentity(
+        app: ((try? AppId.parse(id: app).endpointPath) ?? app).trimmingRealtimeSlashes,
+        path: try realtimePath(forApp: app, requestedPath: requestedPath)
+    )
+}
+
+func realtimeConnectionPoolKey(forApp app: String, path: String?, connectionKey: String) throws -> String {
+    let endpointIdentity = try realtimeEndpointIdentity(forApp: app, path: path)
+    return "\(endpointIdentity.app):\(endpointIdentity.poolKeyPath):\(connectionKey)"
+}
+
+protocol RealtimeWebSocketTask: AnyObject {
+    func resume()
+    func send(
+        _ message: WebSocketMessage,
+        completionHandler: @escaping @Sendable (Error?) -> Void
+    )
+    func receive(completionHandler: @escaping @Sendable (Result<WebSocketMessage, Error>) -> Void)
+    func cancel(with closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?)
+}
+
+extension URLSessionWebSocketTask: RealtimeWebSocketTask {}
+
+protocol RealtimeWebSocketTaskFactory: Sendable {
+    func webSocketTask(with url: URL, delegate: URLSessionWebSocketDelegate) -> RealtimeWebSocketTask
+}
+
+final class URLSessionRealtimeWebSocketTaskFactory: RealtimeWebSocketTaskFactory, @unchecked Sendable {
+    static let shared = URLSessionRealtimeWebSocketTaskFactory()
+
+    private let session: URLSession
+
+    init(session: URLSession = URLSession(configuration: .default)) {
+        self.session = session
+    }
+
+    func webSocketTask(with url: URL, delegate: URLSessionWebSocketDelegate) -> RealtimeWebSocketTask {
+        let task = session.webSocketTask(with: url)
+        task.delegate = delegate
+        return task
+    }
+}
+
+final class WebSocketConnection: NSObject, URLSessionWebSocketDelegate, @unchecked Sendable {
+    let app: String
+    let path: String?
     let client: Client
     let onMessage: (WebSocketMessage) -> Void
     let onError: (Error) -> Void
+    var onClose: () -> Void = {}
 
-    private let queue = DispatchQueue(label: "ai.fal.WebSocketConnection.\(UUID().uuidString)")
-    private let session = URLSession(configuration: .default)
-    private var enqueuedMessage: WebSocketMessage? = nil
-    private var task: URLSessionWebSocketTask?
+    private let stateQueue = DispatchQueue(label: "ai.fal.WebSocketConnection.\(UUID().uuidString)")
+    private let webSocketTaskFactory: RealtimeWebSocketTaskFactory
+    private let refreshTokenFunction: RefreshTokenFunction?
+    private var enqueuedMessages: [WebSocketMessage] = []
+    private var task: RealtimeWebSocketTask?
     private var token: String?
 
     private var isConnecting = false
     private var isRefreshingToken = false
+    private var isClosed = false
 
     init(
         app: String,
+        path: String? = nil,
         client: Client,
+        webSocketTaskFactory: RealtimeWebSocketTaskFactory = URLSessionRealtimeWebSocketTaskFactory.shared,
+        refreshToken: RefreshTokenFunction? = nil,
         onMessage: @escaping (WebSocketMessage) -> Void,
         onError: @escaping (Error) -> Void
     ) {
         self.app = app
+        self.path = path
         self.client = client
+        self.webSocketTaskFactory = webSocketTaskFactory
+        self.refreshTokenFunction = refreshToken
         self.onMessage = onMessage
         self.onError = onError
     }
 
     func connect() {
-        if task == nil, !isConnecting, !isRefreshingToken {
+        stateQueue.async {
+            self.isClosed = false
+            self.connectOnStateQueue()
+        }
+    }
+
+    private func connectOnStateQueue() {
+        if task == nil, !isConnecting, !isRefreshingToken, !isClosed {
             isConnecting = true
             if token == nil, !isRefreshingToken {
                 isRefreshingToken = true
-                refreshToken(app) { result in
-                    switch result {
-                    case let .success(token):
-                        self.token = token
-                        self.isRefreshingToken = false
-                        self.isConnecting = false
-
-                        // Very simple token expiration handling for now
-                        // Create the deadline 90% of the way through the token's lifetime
-                        let tokenExpirationDeadline: DispatchTime = .now() + TokenExpirationInterval - .seconds(20)
-                        DispatchQueue.main.asyncAfter(deadline: tokenExpirationDeadline) {
-                            self.token = nil
+                refreshToken(app, path: path) { result in
+                    self.stateQueue.async {
+                        guard !self.isClosed else {
+                            self.isConnecting = false
+                            self.isRefreshingToken = false
+                            return
                         }
+                        switch result {
+                        case let .success(token):
+                            self.token = token
+                            self.isRefreshingToken = false
+                            self.isConnecting = false
 
-                        self.connect()
-                    case let .failure(error):
-                        self.isConnecting = false
-                        self.isRefreshingToken = false
-                        self.onError(error)
+                            // Very simple token expiration handling for now.
+                            // Create the deadline 90% of the way through the token's lifetime.
+                            let tokenExpirationDeadline: DispatchTime = .now()
+                                + .seconds(TokenDurationSeconds - TokenRefreshLeadTimeSeconds)
+                            self.stateQueue.asyncAfter(deadline: tokenExpirationDeadline) {
+                                guard !self.isClosed else {
+                                    return
+                                }
+                                self.token = nil
+                            }
+
+                            self.connectOnStateQueue()
+                        case let .failure(error):
+                            self.isConnecting = false
+                            self.isRefreshingToken = false
+                            self.onError(error)
+                        }
                     }
                 }
                 return
             }
 
-            let url = buildRealtimeUrl(
-                forApp: app,
-                token: token
-            )
-            let webSocketTask = session.webSocketTask(with: url)
-            webSocketTask.delegate = self
-            task = webSocketTask
+            let url: URL
+            do {
+                url = try buildRealtimeUrl(
+                    forApp: app,
+                    path: path,
+                    token: token
+                )
+            } catch {
+                isConnecting = false
+                onError(error)
+                return
+            }
+            task = webSocketTaskFactory.webSocketTask(with: url, delegate: self)
             // connect and keep the task reference
             task?.resume()
             isConnecting = false
@@ -219,21 +382,43 @@ class WebSocketConnection: NSObject, URLSessionWebSocketDelegate {
         }
     }
 
-    func refreshToken(_ app: String, completion: @escaping (Result<String, Error>) -> Void) {
+    func refreshToken(
+        _ app: String,
+        path: String? = nil,
+        completion: @escaping @Sendable (Result<String, Error>) -> Void
+    ) {
+        if let refreshTokenFunction {
+            refreshTokenFunction(app, path, completion)
+            return
+        }
+
         Task {
-            let url = "https://rest.alpha.fal.ai/tokens/"
-            let body: Payload = try [
-                "allowed_apps": [.string(appAlias(fromId: app))],
-                "token_expiration": 300,
-            ]
             do {
+                let url = "https://rest.fal.ai/tokens/realtime"
+                let body: Payload = [
+                    "allowed_apps": [.string(try realtimeTokenAppIdentifier(forApp: app, path: path))],
+                    "duration": .int(TokenDurationSeconds),
+                ]
                 let response = try await self.client.sendRequest(
                     to: url,
                     input: body.json(),
                     options: .withMethod(.post)
                 )
-                if let token = String(data: response, encoding: .utf8) {
-                    completion(.success(token.replacingOccurrences(of: "\"", with: "")))
+                if let payload = try? Payload.create(fromJSON: response) {
+                    if let token = payload["token"].stringValue, !token.isEmpty {
+                        completion(.success(token))
+                    } else if let token = payload.stringValue?.trimmingCharacters(in: CharacterSet(charactersIn: "\"")),
+                              !token.isEmpty
+                    {
+                        completion(.success(token))
+                    } else {
+                        completion(.failure(FalRealtimeError.unauthorized))
+                    }
+                } else if let token = String(data: response, encoding: .utf8)?
+                    .trimmingCharacters(in: CharacterSet(charactersIn: "\"")),
+                    !token.isEmpty
+                {
+                    completion(.success(token))
                 } else {
                     completion(.failure(FalRealtimeError.unauthorized))
                 }
@@ -244,6 +429,7 @@ class WebSocketConnection: NSObject, URLSessionWebSocketDelegate {
     }
 
     func receiveMessage() {
+        let task = task
         task?.receive { [weak self] incomingMessage in
             switch incomingMessage {
             case let .success(message):
@@ -263,7 +449,11 @@ class WebSocketConnection: NSObject, URLSessionWebSocketDelegate {
                     self?.onError(error)
                 }
             case let .failure(error):
-                self?.task = nil
+                if let connection = self {
+                    connection.stateQueue.async {
+                        connection.task = nil
+                    }
+                }
                 if let posixError = error as? POSIXError, posixError.code == .ENOTCONN {
                     // Ignore this error as it's thrown by Foundation's WebSocket implementation
                     // when messages were requested but the connection was closed already.
@@ -277,25 +467,31 @@ class WebSocketConnection: NSObject, URLSessionWebSocketDelegate {
     }
 
     func send(_ message: URLSessionWebSocketTask.Message) throws {
-        if let task {
-            task.send(message) { [weak self] error in
-                if let error {
-                    self?.onError(error)
+        stateQueue.async {
+            self.isClosed = false
+            if let task = self.task {
+                task.send(message) { [weak self] error in
+                    if let error {
+                        self?.onError(error)
+                    }
                 }
-            }
-        } else {
-            enqueuedMessage = message
-            queue.sync {
-                if !isConnecting {
-                    connect()
+            } else {
+                self.enqueuedMessages.append(message)
+                if !self.isConnecting {
+                    self.connectOnStateQueue()
                 }
             }
         }
     }
 
     func close() {
-        task?.cancel(with: .normalClosure, reason: "Programmatically closed".data(using: .utf8))
-        task = nil
+        stateQueue.async {
+            self.isClosed = true
+            self.task?.cancel(with: .normalClosure, reason: "Programmatically closed".data(using: .utf8))
+            self.task = nil
+            self.enqueuedMessages.removeAll()
+            self.onClose()
+        }
     }
 
     func urlSession(
@@ -303,14 +499,21 @@ class WebSocketConnection: NSObject, URLSessionWebSocketDelegate {
         webSocketTask _: URLSessionWebSocketTask,
         didOpenWithProtocol _: String?
     ) {
-        if let lastMessage = enqueuedMessage {
-            do {
-                try send(lastMessage)
-            } catch {
-                onError(error)
+        realtimeSocketDidOpen()
+    }
+
+    func realtimeSocketDidOpen() {
+        stateQueue.async {
+            let queuedMessages = self.enqueuedMessages
+            self.enqueuedMessages.removeAll()
+            for message in queuedMessages {
+                self.task?.send(message) { [weak self] error in
+                    if let error {
+                        self?.onError(error)
+                    }
+                }
             }
         }
-        enqueuedMessage = nil
     }
 
     func urlSession(
@@ -319,14 +522,49 @@ class WebSocketConnection: NSObject, URLSessionWebSocketDelegate {
         didCloseWith code: URLSessionWebSocketTask.CloseCode,
         reason _: Data?
     ) {
-        if code != .normalClosure {
-            onError(FalRealtimeError.connectionError(code: code.rawValue))
+        realtimeSocketDidClose(with: code)
+    }
+
+    func realtimeSocketDidClose(with code: URLSessionWebSocketTask.CloseCode) {
+        stateQueue.async {
+            if code != .normalClosure {
+                self.onError(FalRealtimeError.connectionError(code: code.rawValue))
+            }
+            self.task = nil
+            self.onClose()
         }
-        task = nil
     }
 }
 
-var connectionPool: [String: WebSocketConnection] = [:]
+final class RealtimeConnectionPool: @unchecked Sendable {
+    private let lock = NSLock()
+    private var connections: [String: WebSocketConnection] = [:]
+
+    func connection(for key: String, create: () -> WebSocketConnection) -> WebSocketConnection {
+        lock.lock()
+        defer {
+            lock.unlock()
+        }
+        if let connection = connections[key] {
+            return connection
+        }
+        let connection = create()
+        connections[key] = connection
+        return connection
+    }
+
+    func removeConnection(for key: String, matching connection: WebSocketConnection) {
+        lock.lock()
+        defer {
+            lock.unlock()
+        }
+        if connections[key] === connection {
+            connections[key] = nil
+        }
+    }
+}
+
+let connectionPool = RealtimeConnectionPool()
 
 /// The real-time client contract.
 public protocol Realtime {
@@ -334,6 +572,14 @@ public protocol Realtime {
 
     func connect(
         to app: String,
+        connectionKey: String,
+        throttleInterval: DispatchTimeInterval,
+        onResult completion: @escaping (Result<Payload, Error>) -> Void
+    ) throws -> RealtimeConnection
+
+    func connect(
+        to app: String,
+        path: String,
         connectionKey: String,
         throttleInterval: DispatchTimeInterval,
         onResult completion: @escaping (Result<Payload, Error>) -> Void
@@ -405,6 +651,27 @@ public struct RealtimeClient: Realtime {
     ) throws -> RealtimeConnection {
         handleConnection(
             to: app,
+            path: nil,
+            connectionKey: connectionKey,
+            throttleInterval: throttleInterval,
+            connectionFactory: { send, close in
+                RealtimeConnection(send, close)
+            },
+            onResult: completion
+        ) as! RealtimeConnection
+    }
+
+    public func connect(
+        to app: String,
+        path: String,
+        connectionKey: String,
+        throttleInterval: DispatchTimeInterval,
+        onResult completion: @escaping (Result<Payload, Error>) -> Void
+    ) throws -> RealtimeConnection {
+        _ = try realtimeConnectionPoolKey(forApp: app, path: path, connectionKey: connectionKey)
+        return handleConnection(
+            to: app,
+            path: path,
             connectionKey: connectionKey,
             throttleInterval: throttleInterval,
             connectionFactory: { send, close in
@@ -418,32 +685,47 @@ public struct RealtimeClient: Realtime {
 extension Realtime {
     func handleConnection<InputType: Encodable, ResultType: Decodable>(
         to app: String,
+        path: String? = nil,
         connectionKey: String = UUID().uuidString,
         throttleInterval: DispatchTimeInterval = .milliseconds(128),
         connectionFactory createRealtimeConnection: @escaping (@escaping SendFunction, @escaping CloseFunction) -> BaseRealtimeConnection<InputType>,
         onResult completion: @escaping (Result<ResultType, Error>) -> Void
     ) -> BaseRealtimeConnection<InputType> {
-        let key = "\(app):\(connectionKey)"
-        let ws = connectionPool[key] ?? WebSocketConnection(
-            app: app,
-            client: client,
-            onMessage: { message in
-                do {
-                    let result = try message.decode(to: ResultType.self)
-                    completion(.success(result))
-                } catch {
+        let key: String
+        do {
+            key = try realtimeConnectionPoolKey(forApp: app, path: path, connectionKey: connectionKey)
+        } catch {
+            let failedSend: SendFunction = { _ in throw error }
+            let close: CloseFunction = {}
+            return createRealtimeConnection(failedSend, close)
+        }
+        let ws = connectionPool.connection(for: key) {
+            let connection = WebSocketConnection(
+                app: app,
+                path: path,
+                client: client,
+                onMessage: { message in
+                    do {
+                        let result = try message.decode(to: ResultType.self)
+                        completion(.success(result))
+                    } catch {
+                        completion(.failure(error))
+                    }
+                },
+                onError: { error in
                     completion(.failure(error))
                 }
-            },
-            onError: { error in
-                completion(.failure(error))
+            )
+            connection.onClose = { [weak connection] in
+                guard let connection else {
+                    return
+                }
+                connectionPool.removeConnection(for: key, matching: connection)
             }
-        )
-        if connectionPool[key] == nil {
-            connectionPool[key] = ws
+            return connection
         }
 
-        let sendData = { (data: WebSocketMessage) in
+        let sendData: (WebSocketMessage) -> Void = { data in
             do {
                 try ws.send(data)
             } catch {
@@ -483,5 +765,29 @@ public extension Realtime {
             throttleInterval: throttleInterval,
             onResult: completion
         )
+    }
+
+    /// Connects to a custom realtime endpoint path for the given app.
+    ///
+    /// Most realtime apps use `/realtime`; use this overload for apps that
+    /// publish a different WebSocket route.
+    func connect(
+        to app: String,
+        path: String,
+        connectionKey: String = UUID().uuidString,
+        throttleInterval: DispatchTimeInterval = .milliseconds(64),
+        onResult completion: @escaping (Result<Payload, Error>) -> Void
+    ) throws -> RealtimeConnection {
+        _ = try realtimeConnectionPoolKey(forApp: app, path: path, connectionKey: connectionKey)
+        return handleConnection(
+            to: app,
+            path: path,
+            connectionKey: connectionKey,
+            throttleInterval: throttleInterval,
+            connectionFactory: { send, close in
+                RealtimeConnection(send, close)
+            },
+            onResult: completion
+        ) as! RealtimeConnection
     }
 }

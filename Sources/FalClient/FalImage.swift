@@ -1,6 +1,53 @@
 import Foundation
 
-public enum FalImageContent: Codable {
+/// Loads remote image content from a URL.
+public protocol FalImageContentDataLoading: Sendable {
+    /// Returns the data at the specified URL.
+    /// - Parameter url: The remote image URL to load.
+    func data(from url: URL) async throws -> Data
+}
+
+/// A URLSession-backed loader for remote Fal image content.
+public final class URLSessionFalImageContentDataLoader: FalImageContentDataLoading, @unchecked Sendable {
+    /// Shared loader using `URLSession.shared`.
+    public static let shared = URLSessionFalImageContentDataLoader()
+
+    private let session: URLSession
+
+    /// Creates a loader backed by the specified URL session.
+    /// - Parameter session: The session used to load remote image bytes.
+    public init(session: URLSession = .shared) {
+        self.session = session
+    }
+
+    /// Returns the data at the specified URL.
+    /// - Parameter url: The remote image URL to load.
+    public func data(from url: URL) async throws -> Data {
+        try validateFalImageContentURL(url)
+
+        let request = URLRequest(url: url)
+        let validator: @Sendable (URL) -> Bool = { URL.safeExternalHTTPSURL($0) }
+        let delegate = RedirectValidatingURLSessionDelegate(validator: validator)
+        let (data, response) = try await session.data(for: request, delegate: delegate)
+        if let rejectedURL = delegate.rejectedRedirectURL {
+            throw FalError.invalidUrl(url: rejectedURL.absoluteString.redactedURLForDescription)
+        }
+        if let responseURL = response.url {
+            try validateFalImageContentURL(responseURL)
+        }
+        if let httpResponse = response as? HTTPURLResponse,
+           !httpResponse.isSuccessful
+        {
+            throw FalError.httpError(FalHTTPError(
+                statusCode: httpResponse.statusCode,
+                message: HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode)
+            ))
+        }
+        return data
+    }
+}
+
+public enum FalImageContent: Codable, Sendable {
     case url(String)
     case raw(Data)
 
@@ -25,14 +72,37 @@ public enum FalImageContent: Codable {
         }
     }
 
+    @available(*, deprecated, message: "Use loadData() async throws instead.")
     public var data: Data {
         switch self {
-        case let .url(url):
-            let url = URL(string: url)!
-            return try! Data(contentsOf: url)
+        case .url:
+            preconditionFailure("FalImageContent.data cannot synchronously load URL-backed content. Use loadData() async throws instead.")
         case let .raw(data):
             return data
         }
+    }
+
+    /// Loads the image bytes represented by this content.
+    /// - Parameter loader: The loader used for URL-backed content.
+    /// - Returns: Raw image bytes.
+    public func loadData(
+        using loader: FalImageContentDataLoading = URLSessionFalImageContentDataLoader.shared
+    ) async throws -> Data {
+        switch self {
+        case let .url(urlString):
+            guard let url = URL.safeExternalHTTPSURL(from: urlString) else {
+                throw FalError.invalidUrl(url: urlString)
+            }
+            return try await loader.data(from: url)
+        case let .raw(data):
+            return data
+        }
+    }
+}
+
+private func validateFalImageContentURL(_ url: URL) throws {
+    guard URL.safeExternalHTTPSURL(url) else {
+        throw FalError.invalidUrl(url: url.absoluteString.redactedURLForDescription)
     }
 }
 
@@ -62,11 +132,38 @@ extension FalImageContent: ExpressibleByStringInterpolation {
     }
 }
 
-public struct FalImage: Codable {
+public struct FalImage: Codable, Sendable {
     public let content: FalImageContent
     public let contentType: String
     public let width: Int
     public let height: Int
+
+    /// Creates an image model.
+    /// - Parameters:
+    ///   - content: The image content, either remote URL or raw data.
+    ///   - contentType: The image MIME type.
+    ///   - width: The image width in pixels.
+    ///   - height: The image height in pixels.
+    public init(
+        content: FalImageContent,
+        contentType: String,
+        width: Int,
+        height: Int
+    ) {
+        self.content = content
+        self.contentType = contentType
+        self.width = width
+        self.height = height
+    }
+
+    /// Loads the image bytes represented by `content`.
+    /// - Parameter loader: The loader used for URL-backed content.
+    /// - Returns: Raw image bytes.
+    public func loadData(
+        using loader: FalImageContentDataLoading = URLSessionFalImageContentDataLoader.shared
+    ) async throws -> Data {
+        try await content.loadData(using: loader)
+    }
 
     // The following exist so we support payloads with both `url` and `content` keys
     // This should no longer be necessary once the Server API is consolidated

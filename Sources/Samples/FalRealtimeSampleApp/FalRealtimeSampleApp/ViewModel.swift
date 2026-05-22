@@ -1,4 +1,5 @@
 import FalClient
+import Observation
 import SwiftUI
 
 struct TurboInput: Encodable {
@@ -21,25 +22,61 @@ struct TurboResponse: Decodable {
     let images: [FalImage]
 }
 
-class LiveImage: ObservableObject {
-    @Published var currentImage: Data?
+@MainActor
+@Observable
+final class LiveImage {
+    var currentImage: Data?
 
     private var connection: TypedRealtimeConnection<TurboInput>?
+    private var imageLoadTask: Task<Void, Never>?
 
     init() {
+        ensureConnection()
+    }
+
+    func ensureConnection() {
+        guard connection == nil else {
+            return
+        }
         connection = try? fal.realtime.connect(
             to: "fal-ai/fast-turbo-diffusion/image-to-image",
             connectionKey: "PencilKitDemo",
             throttleInterval: .never
         ) { (result: Result<TurboResponse, Error>) in
-            if case let .success(data) = result,
-               case let imageData = data.images[0].content.data
-            {
-                DispatchQueue.main.async {
-                    self.currentImage = imageData
-                }
+            Task { @MainActor [weak self] in
+                self?.handle(result)
             }
-            if case let .failure(error) = result {
+        }
+    }
+
+    func close() {
+        imageLoadTask?.cancel()
+        imageLoadTask = nil
+        connection?.close()
+        connection = nil
+    }
+
+    private func handle(_ result: Result<TurboResponse, Error>) {
+        if case let .success(data) = result,
+           let image = data.images.first
+        {
+            load(image)
+        }
+        if case let .failure(error) = result {
+            print("-------------- Error")
+            print(error)
+        }
+    }
+
+    private func load(_ image: FalImage) {
+        imageLoadTask?.cancel()
+        imageLoadTask = Task { @MainActor [weak self] in
+            do {
+                let imageData = try await image.loadData()
+                try Task.checkCancellation()
+                self?.currentImage = imageData
+            } catch is CancellationError {
+            } catch {
                 print("-------------- Error")
                 print(error)
             }
@@ -47,6 +84,7 @@ class LiveImage: ObservableObject {
     }
 
     func generate(prompt: String, drawing: Data) throws {
+        ensureConnection()
         if let connection {
             try connection.send(TurboInput(
                 prompt: prompt,

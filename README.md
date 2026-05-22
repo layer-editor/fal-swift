@@ -1,101 +1,154 @@
-## The fal.ai Swift Client
+# Fal Swift
 
-[![Swift](https://img.shields.io/endpoint?style=flat-square&url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2Ffal-ai%2Ffal-swift%2Fbadge%3Ftype%3Dswift-versions)](https://swiftpackageindex.com/fal-ai/fal-swift)
-[![](https://img.shields.io/endpoint?style=flat-square&url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2Ffal-ai%2Ffal-swift%2Fbadge%3Ftype%3Dplatforms)](https://swiftpackageindex.com/fal-ai/fal-swift)
-![Build](https://img.shields.io/github/actions/workflow/status/fal-ai/fal-swift/build.yml?style=flat-square)
-![License](https://img.shields.io/github/license/fal-ai/fal-swift?style=flat-square)
+A pragmatic Swift client for Fal model APIs. This fork focuses on production Apple-platform app needs: direct requests, queue-backed inference, model discovery, streaming, realtime connections, storage uploads, typed `Codable` calls, and testable networking.
 
-## About the Project
+For drift prevention, this repo links back to Fal's canonical documentation and
+the peer packages used for parity review. Start with [Reference Sources](docs/reference-sources.md)
+before changing request lifecycle, streaming, realtime, storage, or model
+catalog behavior.
 
-The `FalClient` is a robust and user-friendly Swift package designed for seamless integration of fal serverless functions into Swift projects. This library, developed in pure Swift, provides developers with simple APIs to interact with AI models, suitable for both iOS and macOS platforms.
+## Installation
 
-## Getting Started
-
-The `FalClient` library serves as a client for fal serverless Python functions. Before using this library, ensure you've set up your serverless functions as per the [quickstart guide](https://fal.ai/docs).
-
-### Client Library
-
-This Swift client library is crafted as a lightweight layer atop Swift's networking standards like `URLSession`. It ensures hassle-free integration into your existing Swift codebase. The library is designed to address the nuances of Swift and Apple's ecosystem, ensuring smooth operation across different Apple platforms.
-
-> **Note:**
-> Make sure to review the [fal-serverless getting started guide](https://fal.ai/docs) to acquire your credentials and register your functions.
-
-1. Add `FalClient` as a dependency in your Swift Package Manager.
-
-2. Set up the client instance:
-
-   ```swift
-   import FalClient
-   let fal = FalClient.withCredentials(.keyPair("FAL_KEY_ID:FAL_KEY_SECRET"))
-
-   // You can also use a proxy to protect your credentials
-   // let fal = FalClient.withProxy("http://localhost:3333/api/fal/proxy")
-   ```
-
-3. Use `fal.subscribe` to dispatch requests to the model API:
-   ```swift
-   let result = try await fal.subscribe(to: "text-to-image",
-       input: [
-           "prompt": "a cute shih-tzu puppy",
-           "model_name": "stabilityai/stable-diffusion-xl-base-1.0",
-           "image_size": "square_hd"
-       ]) { update in
-           print(update)
-       }
-   ```
-
-**Notes:**
-
-- Replace `text-to-image` with a valid model id. Check [fal.ai/models](https://fal.ai/models) for all available models.
-- It fully relies on `async/await` for asynchronous programming.
-- The result type in Swift will be a `[String: Any]` and the entries depend on the API output schema.
-- The Swift client also supports typed inputs and outputs through `Codable`.
-
-## Real-time
-
-The client supports real-time model APIs. Checkout the [FalRealtimeSampleApp](./Sources/Samples/FalRealtimeSampleApp/) for more details.
+Add the package with Swift Package Manager:
 
 ```swift
-let connection = try fal.realtime.connect(
-    to: OptimizedLatentConsistency,
-    connectionKey: "PencilKitDemo",
-    throttleInterval: .milliseconds(128)
-) { (result: Result<LcmResponse, Error>)  in
-    if case let .success(data) = result,
-        let image = data.images.first {
-        let data = try? Data(contentsOf: URL(string: image.url)!)
-        DispatchQueue.main.async {
-            self.currentImage = data
-        }
-    }
+.package(url: "https://github.com/layer-editor/fal-swift.git", branch: "main")
+```
+
+Then add `FalClient` to your target dependencies.
+
+## Authentication
+
+For server tools, scripts, and local development, use `FAL_KEY` or explicit credentials:
+
+```swift
+import FalClient
+
+let fal = FalClient.withCredentials(.fromEnv)
+```
+
+Do not ship long-lived Fal API keys inside iOS or macOS apps. Client apps should call through a server proxy or use short-lived bearer credentials:
+
+```swift
+let fal = FalClient.withProxy("https://your-server.example.com/api/fal/proxy")
+```
+
+See [Authentication and Proxy](docs/authentication-and-proxy.md) for the app-side guidance.
+
+## Queue Requests
+
+Queue-backed requests are the default shape for model APIs that may take more than a few seconds:
+
+```swift
+let result = try await fal.subscribe(
+    to: "fal-ai/flux/dev",
+    input: [
+        "prompt": .string("a quiet studio desk with warm morning light"),
+    ],
+    pollInterval: .milliseconds(500),
+    timeout: .minutes(3),
+    includeLogs: true
+) { status in
+    print(status)
 }
 
-try connection.send(LcmInput(
-    prompt: prompt,
-    imageUrl: "data:image/jpeg;base64,\(drawing.base64EncodedString())",
-    seed: 6_252_023,
-    syncMode: true
-))
+if case let .string(url) = result["images"][0]["url"] {
+    print(url)
+}
 ```
 
-## Sample apps
+For richer queue metadata, use `queue.submitDetailed`, `queue.statusDetail`, `queue.response`, `queue.cancel`, or `queue.streamStatus`. See [Queue](docs/queue.md).
 
-Check the `Sources/Samples` folder for a handful of sample applications using the `FalClient`.
+## Model Discovery
 
-Open them with `xed` to quickly start playing with
+Use `fal.models` to search Fal's model catalog, fetch optional OpenAPI schemas, infer broad input/output capabilities, and build dynamic playgrounds with `Payload`:
+
+```swift
+let page = try await fal.models.search(
+    "flux",
+    category: "text-to-image",
+    status: .active,
+    limit: 25,
+    expand: [.openAPI]
+)
+
+for model in page.models {
+    print(model.endpointId)
+    print(model.inferredCapabilities.task as Any)
+}
+```
+
+See [Model Discovery](docs/models.md).
+
+## Typed Calls
+
+The client also supports `Codable` request and response types:
+
+```swift
+struct ImageInput: Encodable {
+    let prompt: String
+}
+
+struct ImageOutput: Decodable {
+    let images: [FalImage]
+}
+
+let output: ImageOutput = try await fal.subscribe(
+    to: "fal-ai/flux/dev",
+    input: ImageInput(prompt: "a small print studio")
+)
+```
+
+Typed `Encodable` inputs that contain `Data` are rejected before request encoding. Use the `Payload` API with `.data` when you want the client to upload binary inputs before sending the model request.
+
+## Streaming
+
+Direct streaming uses the model `/stream` SSE endpoint and is separate from queue polling:
+
+```swift
+let events = try await fal.stream(
+    "fal-ai/flux/dev",
+    input: ["prompt": .string("a graphite sketch of a glass house")]
+)
+
+for try await event in events {
+    print(event)
+}
+```
+
+See [Streaming](docs/streaming.md).
+
+## Storage
+
+Binary `Payload.data` values are uploaded automatically before request encoding. Direct storage uploads default to the modern Fal CDN path: `v3.fal.media`, then `fal.media`, then REST presigned fallback. Proxy-backed clients skip direct `fal.media` fallback so raw credentials are not sent from app clients.
+
+See [Storage Uploads](docs/storage.md).
+
+## Realtime
+
+Realtime WebSocket APIs are available through `fal.realtime.connect(...)`. The realtime sample is useful as a reference for API shape, but it is still labeled as a sample rather than production app architecture.
+
+See [Realtime](docs/realtime.md).
+
+## Errors
+
+Public APIs throw `FalError`, including inspectable HTTP status, Fal request ID, error type, timeout type, and parsed JSON payload when available.
+
+See [Errors](docs/errors.md).
+
+## Samples
+
+Sample apps live in `Sources/Samples`. Each sample has a README with its status and setup notes. Treat them as lightweight references, not production app architecture.
+
+## Development
 
 ```bash
-xed Sources/Samples/FalSampleApp
+swift test
+swift build --target FalClient --configuration release
 ```
 
-## Roadmap
-
-See the [open feature requests](https://github.com/fal-ai/fal-swift/labels/enhancement) for a list of proposed features and join the discussion.
-
-## Contributing
-
-Contributions are what make the open source community such an amazing place to learn, inspire, and create. Any contributions you make to the Swift version of the client are **greatly appreciated**.
+See [CONTRIBUTING](CONTRIBUTING.md) for the local workflow.
 
 ## License
 
-Distributed under the MIT License. See [LICENSE](https://github.com/fal-ai/fal-swift/blob/main/LICENSE) for more information.
+Distributed under the MIT License. See [LICENSE](LICENSE).

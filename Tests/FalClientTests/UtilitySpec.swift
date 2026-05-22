@@ -1,34 +1,57 @@
 @testable import FalClient
-import Nimble
-import Quick
+import XCTest
 
-class UtilitySpec: QuickSpec {
-    override static func spec() {
-        describe("Utility.buildUrl") {
-            it("should create a url to gateway fal.ai from a legacy app alias") {
-                let id = "1234-app-alias"
-                let url = buildUrl(fromId: id)
-                expect(url).to(equal("https://fal.run/1234/app-alias"))
-            }
-            it("should create a url to fal.run from an app alias") {
-                let id = "user/app-alias"
-                let url = buildUrl(fromId: id)
-                expect(url).to(equal("https://fal.run/user/app-alias"))
-            }
-        }
-        describe("Utility.AppId.parse") {
-            it ("should parse an id without a path") {
-                let appId = try AppId.parse(id: "fal-ai/fast-sdxl")
-                expect(appId.ownerId).to(equal("fal-ai"))
-                expect(appId.appAlias).to(equal("fast-sdxl"))
-                expect(appId.path).to(beNil())
-            }
-            it ("should parse an id with a path") {
-                let appId = try AppId.parse(id: "fal-ai/fast-sdxl/image-to-image")
-                expect(appId.ownerId).to(equal("fal-ai"))
-                expect(appId.appAlias).to(equal("fast-sdxl"))
-                expect(appId.path).to(equal("image-to-image"))
-            }
-        }
+final class UtilitySpec: XCTestCase {
+    func testBuildUrlCreatesUrlToGatewayFalAIFromLegacyAppAlias() {
+        let id = "1234-app-alias"
+        let url = buildUrl(fromId: id)
+
+        XCTAssertEqual(url, "https://fal.run/1234/app-alias")
+    }
+
+    func testBuildUrlCreatesUrlToFalRunFromAppAlias() {
+        let id = "user/app-alias"
+        let url = buildUrl(fromId: id)
+
+        XCTAssertEqual(url, "https://fal.run/user/app-alias")
+    }
+
+    func testBuildUrlAppendsPathsWithSingleSeparator() {
+        let url = buildUrl(fromId: "fal-ai/flux/schnell/", path: "stream")
+
+        XCTAssertEqual(url, "https://fal.run/fal-ai/flux/schnell/stream")
+    }
+
+    func testAppIdParsesIdWithoutPath() throws {
+        let appId = try AppId.parse(id: "fal-ai/fast-sdxl")
+
+        XCTAssertEqual(appId.ownerId, "fal-ai")
+        XCTAssertEqual(appId.appAlias, "fast-sdxl")
+        XCTAssertNil(appId.namespace)
+        XCTAssertNil(appId.path)
+        XCTAssertEqual(appId.endpointPath, "fal-ai/fast-sdxl")
+        XCTAssertEqual(appId.queueBasePath, "fal-ai/fast-sdxl")
+    }
+
+    func testAppIdParsesIdWithPath() throws {
+        let appId = try AppId.parse(id: "fal-ai/fast-sdxl/image-to-image")
+
+        XCTAssertEqual(appId.ownerId, "fal-ai")
+        XCTAssertEqual(appId.appAlias, "fast-sdxl")
+        XCTAssertNil(appId.namespace)
+        XCTAssertEqual(appId.path, "image-to-image")
+        XCTAssertEqual(appId.endpointPath, "fal-ai/fast-sdxl/image-to-image")
+        XCTAssertEqual(appId.queueBasePath, "fal-ai/fast-sdxl/image-to-image")
+    }
+
+    func testAppIdParsesReservedNamespaceIds() throws {
+        let appId = try AppId.parse(id: "workflows/chris/image-pipeline/preview")
+
+        XCTAssertEqual(appId.namespace, "workflows")
+        XCTAssertEqual(appId.ownerId, "chris")
+        XCTAssertEqual(appId.appAlias, "image-pipeline")
+        XCTAssertEqual(appId.path, "preview")
+        XCTAssertEqual(appId.endpointPath, "workflows/chris/image-pipeline/preview")
+        XCTAssertEqual(appId.queueBasePath, "workflows/chris/image-pipeline")
     }
 }

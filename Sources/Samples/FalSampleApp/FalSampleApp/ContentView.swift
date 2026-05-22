@@ -23,7 +23,7 @@ struct ContentView: View {
                                     "prompt": .string(PROMPT),
                                 ],
                                 pollInterval: .milliseconds(500),
-                                timeout: .seconds(5),
+                                timeout: .minutes(3),
                                 includeLogs: true
                             ) { update in
                                 update.logs
@@ -43,13 +43,13 @@ struct ContentView: View {
                     }
                 }
                 .padding()
-                .cornerRadius(16)
-                .foregroundColor(.white)
+                .clipShape(.rect(cornerRadius: 16))
+                .foregroundStyle(.white)
                 .background(Color.indigo)
             }
 
-            if let imageUrl {
-                KFImage.url(URL(string: imageUrl)!)
+            if let imageUrl, let url = URL(string: imageUrl) {
+                KFImage.url(url)
                     .fade(duration: 0.25)
                     .resizable()
                     .aspectRatio(1, contentMode: .fill)

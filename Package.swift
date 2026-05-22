@@ -1,4 +1,4 @@
-// swift-tools-version: 5.7
+// swift-tools-version: 5.9
 // The swift-tools-version declares the minimum version of Swift required to build this package.
 
 import PackageDescription
@@ -20,8 +20,6 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/nnabeyang/swift-msgpack.git", from: "0.3.3"),
-        .package(url: "https://github.com/Quick/Quick.git", from: "7.3.0"),
-        .package(url: "https://github.com/Quick/Nimble.git", from: "13.0.0"),
     ],
     targets: [
         .target(
@@ -35,8 +33,6 @@ let package = Package(
             name: "FalClientTests",
             dependencies: [
                 "FalClient",
-                .product(name: "Quick", package: "quick"),
-                .product(name: "Nimble", package: "nimble"),
             ],
             path: "Tests/FalClientTests"
         ),
