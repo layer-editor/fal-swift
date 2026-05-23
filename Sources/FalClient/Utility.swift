@@ -72,7 +72,7 @@ struct AppId {
             appAlias: parts[1],
             path: parts.endIndex > 2 ? parts.dropFirst(2).joined(separator: "/") : nil,
             endpointPath: parts.joined(separator: "/"),
-            queueBasePath: parts.joined(separator: "/")
+            queueBasePath: "\(parts[0])/\(parts[1])"
         )
     }
 }

@@ -41,7 +41,13 @@ final class UtilitySpec: XCTestCase {
         XCTAssertNil(appId.namespace)
         XCTAssertEqual(appId.path, "image-to-image")
         XCTAssertEqual(appId.endpointPath, "fal-ai/fast-sdxl/image-to-image")
-        XCTAssertEqual(appId.queueBasePath, "fal-ai/fast-sdxl/image-to-image")
+        // queueBasePath strips the trailing path component because Fal's queue
+        // status/response/cancel endpoints live on the parent model
+        // (https://queue.fal.run/{owner}/{app}/requests/{id}/...), not under
+        // model-variant subpaths like /image-to-image or /edit. This mirrors
+        // the reserved-namespace branch's behavior of dropping `parts[3...]`
+        // from queueBasePath.
+        XCTAssertEqual(appId.queueBasePath, "fal-ai/fast-sdxl")
     }
 
     func testAppIdParsesReservedNamespaceIds() throws {
