@@ -74,6 +74,43 @@ final class QueueStreamStatusTests: XCTestCase {
         XCTAssertEqual(request.url?.path, "/workflows/chris/image-pipeline/requests/request-id/status/stream")
     }
 
+    func testQueueStreamStatusDecodesMultipleConcatenatedJSONObjectsInOneChunk() async throws {
+        // Fal's queue status stream emits successive `data:` lines without a
+        // blank-line separator between events. The line-based SSE parser joins
+        // them with "\n" per the spec, producing a single chunk that contains
+        // two or more concatenated JSON objects. JSONDecoder rejects that
+        // shape with "Unexpected character '{' after top-level value", so the
+        // decoder needs to fall back to per-line decoding for chunks with
+        // multiple JSON values.
+        let responseUrl = "https://queue.fal.run/fal-ai/x/requests/r1"
+        let concatenated = #"{"status":"IN_QUEUE","request_id":"r1","queue_position":3,"response_url":"\#(responseUrl)","logs":[]}"# +
+            "\n" +
+            #"{"status":"IN_PROGRESS","request_id":"r1","logs":[]}"# +
+            "\n" +
+            #"{"status":"COMPLETED","request_id":"r1","response_url":"\#(responseUrl)","logs":[],"metrics":{"inference_time":2.4}}"#
+        transport = RecordingHTTPTransport(serverSentEventData: [concatenated])
+        let client = TestStreamClient(httpTransport: transport)
+        let queue = QueueClient(client: client)
+
+        let stream = try await queue.streamStatus(
+            "fal-ai/x",
+            of: "r1",
+            includeLogs: true
+        )
+        var updates: [QueueStatusDetail] = []
+        for try await update in stream {
+            updates.append(update)
+        }
+
+        XCTAssertEqual(updates.count, 3)
+        XCTAssertEqual(updates.map(\.requestId), ["r1", "r1", "r1"])
+        XCTAssertEqual(updates.last?.metrics?["inference_time"], .double(2.4))
+        guard case .inQueue(let position, _) = updates.first?.status else {
+            return XCTFail("Expected first update to be .inQueue, got \(String(describing: updates.first?.status))")
+        }
+        XCTAssertEqual(position, 3)
+    }
+
     func testQueueStreamStatusPreservesHTTPErrorPayload() async throws {
         let errorData = Data(#"{"detail":"stream unavailable","error_type":"service_unavailable"}"#.utf8)
         transport = RecordingHTTPTransport(
