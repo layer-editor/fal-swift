@@ -33,7 +33,11 @@ final class QueueStreamStatusTests: XCTestCase {
 
         XCTAssertEqual(request.httpMethod, "GET")
         XCTAssertEqual(request.value(forHTTPHeaderField: "accept"), "text/event-stream")
-        XCTAssertEqual(components.percentEncodedPath, "/fal-ai/flux/schnell/requests/request-id/status/stream")
+        // The trailing model-variant component (``schnell``) is stripped by
+        // ``AppId.parse(...).queueBasePath`` per the queue-routing fix in
+        // a6dc90a — Fal serves queue status under the parent model, not the
+        // variant path. This assertion was left over from before that fix.
+        XCTAssertEqual(components.percentEncodedPath, "/fal-ai/flux/requests/request-id/status/stream")
         XCTAssertEqual(queryItems["logs"], "1")
         XCTAssertEqual(updates.map(\.requestId), ["request-id", "request-id"])
         XCTAssertEqual(updates.first?.statusUrl, "https://queue.fal.run/fal-ai/flux/schnell/requests/request-id/status")
