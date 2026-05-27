@@ -841,6 +841,70 @@ final class StorageTests: XCTestCase {
         )
     }
 
+    func testDirectFalCDNV3UploadRoutesThroughLoopbackProxy() async throws {
+        let image = Data("image".utf8)
+        let proxyURL = "http://localhost:3333/api/fal/proxy"
+        let transport = RecordingHTTPTransport { request in
+            switch request.value(forHTTPHeaderField: "x-fal-target-url") ?? request.url?.absoluteString {
+            case "https://rest.fal.ai/storage/auth/token?storage_type=fal-cdn-v3":
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!
+                let data = """
+                {
+                  "token": "cdn-token",
+                  "token_type": "Bearer",
+                  "base_url": "https://v3.fal.media",
+                  "expires_at": "2026-05-19T12:00:00+00:00"
+                }
+                """.data(using: .utf8)!
+                return HTTPTransportResponse(data: data, response: response)
+            case "https://v3.fal.media/files/upload":
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!
+                let data = #"{"access_url":"https://v3.fal.media/files/rabbit/proxied.png"}"#.data(using: .utf8)!
+                return HTTPTransportResponse(data: data, response: response)
+            default:
+                XCTFail("Unexpected request to \(request.url?.absoluteString ?? "nil")")
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 500,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!
+                return HTTPTransportResponse(data: Data(), response: response)
+            }
+        }
+        let storage = StorageClient(client: StorageTestClient(
+            config: ClientConfig(
+                credentials: .bearerToken("openstudio-jwt"),
+                authScheme: .bearer,
+                requestProxy: proxyURL
+            ),
+            httpTransport: transport
+        ))
+
+        let fileUrl = try await storage.upload(
+            data: image,
+            ofType: .imagePng,
+            options: .init(repository: .directFalCDNV3)
+        )
+
+        XCTAssertEqual(fileUrl, "https://v3.fal.media/files/rabbit/proxied.png")
+        let uploadRequest = try XCTUnwrap(transport.requests.last)
+        XCTAssertEqual(uploadRequest.url?.absoluteString, proxyURL)
+        XCTAssertEqual(uploadRequest.value(forHTTPHeaderField: "x-fal-target-url"), "https://v3.fal.media/files/upload")
+        XCTAssertEqual(uploadRequest.value(forHTTPHeaderField: "Authorization"), "Bearer openstudio-jwt")
+        XCTAssertEqual(uploadRequest.value(forHTTPHeaderField: "x-fal-cdn-authorization"), "Bearer cdn-token")
+    }
+
     func testDirectFalCDNV3UploadRejectsNonFalTokenBaseURL() async throws {
         let transport = RecordingHTTPTransport { request in
             XCTAssertEqual(request.url?.absoluteString, "https://rest.fal.ai/storage/auth/token?storage_type=fal-cdn-v3")

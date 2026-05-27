@@ -644,16 +644,18 @@ struct StorageClient: Storage {
                 redirectValidator: { URL.safeFalDirectCDNV3UploadURL($0) }
             )
         }
-        guard let proxyURL = URL(string: proxyString),
-              URL.safeExternalHTTPSURL(proxyURL)
-        else {
+        guard let proxyURL = client.resolvedRequestProxyURL else {
             throw FalError.invalidUrl(url: proxyString.redactedURLForDescription)
         }
-        let proxyHost = proxyURL.host
+        let proxyScheme = proxyURL.scheme?.lowercased()
+        let proxyHost = proxyURL.host?.lowercased()
+        let proxyPort = proxyURL.effectivePort
         return DirectCDNUploadRouting(
             url: proxyURL,
             redirectValidator: { redirected in
-                URL.safeExternalHTTPSURL(redirected) && redirected.host == proxyHost
+                redirected.scheme?.lowercased() == proxyScheme
+                    && redirected.host?.lowercased() == proxyHost
+                    && redirected.effectivePort == proxyPort
             }
         )
     }
