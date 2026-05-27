@@ -98,17 +98,8 @@ extension Client {
         request.setValue(userAgent, forHTTPHeaderField: "user-agent")
         try options.applyHeaders(to: &request, includeQueuePriority: includeQueuePriority)
 
-        if shouldApplyAuthorizationHeader {
-            let credentials = config.credentials.rawValue
-            if !credentials.isEmpty {
-                let authValue = switch config.authScheme {
-                case .key:
-                    "Key \(credentials)"
-                case .bearer:
-                    "Bearer \(credentials)"
-                }
-                request.setValue(authValue, forHTTPHeaderField: "authorization")
-            }
+        if let authValue = callerAuthorizationHeaderValue {
+            request.setValue(authValue, forHTTPHeaderField: "Authorization")
         }
 
         if config.requestProxy != nil {
@@ -118,16 +109,41 @@ extension Client {
         return request
     }
 
+    var callerAuthorizationHeaderValue: String? {
+        guard shouldApplyAuthorizationHeader else {
+            return nil
+        }
+        let credentials = config.credentials.rawValue
+        guard !credentials.isEmpty else {
+            return nil
+        }
+        switch config.authScheme {
+        case .key:
+            return "Key \(credentials)"
+        case .bearer:
+            return "Bearer \(credentials)"
+        }
+    }
+
     private var shouldApplyAuthorizationHeader: Bool {
-        guard let requestProxy = config.requestProxy else {
+        guard config.requestProxy != nil else {
             return true
         }
-        guard config.authScheme == .bearer,
-              let url = URL(string: requestProxy)
+        return config.authScheme == .bearer && resolvedRequestProxyURL != nil
+    }
+
+    /// Returns the configured `requestProxy` as a `URL` if it matches the proxy URL policy
+    /// shared by `sendRequest` and direct CDN upload routing: HTTPS, or a loopback origin
+    /// (`localhost`, `127.0.0.1`, `::1`). Returns `nil` if no proxy is configured or the URL
+    /// fails the policy.
+    var resolvedRequestProxyURL: URL? {
+        guard let requestProxy = config.requestProxy,
+              let url = URL(string: requestProxy),
+              url.scheme == "https" || url.isLoopback
         else {
-            return false
+            return nil
         }
-        return url.scheme == "https" || url.isLoopback
+        return url
     }
 
     func checkResponseStatus(for response: URLResponse, withData data: Data) throws {
@@ -241,7 +257,8 @@ private extension String {
              "proxy-authorization",
              "cookie",
              "host",
-             "x-fal-target-url":
+             "x-fal-target-url",
+             "x-fal-cdn-authorization":
             return true
         default:
             return false
@@ -290,7 +307,7 @@ private extension HTTPURLResponse {
     }
 }
 
-private extension URL {
+extension URL {
     var isLoopback: Bool {
         guard let host else {
             return false
@@ -298,5 +315,21 @@ private extension URL {
         return host == "localhost"
             || host == "127.0.0.1"
             || host == "::1"
+    }
+
+    /// The port to compare two URLs by, defaulting to the scheme's well-known port when the
+    /// URL omits one. Returns `nil` for schemes without a known default port.
+    var effectivePort: Int? {
+        if let port {
+            return port
+        }
+        switch scheme?.lowercased() {
+        case "https":
+            return 443
+        case "http":
+            return 80
+        default:
+            return nil
+        }
     }
 }
