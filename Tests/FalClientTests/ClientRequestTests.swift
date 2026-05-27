@@ -101,6 +101,7 @@ final class ClientRequestTests: XCTestCase {
                     "Cookie": "session=leaked",
                     "Host": "attacker.example",
                     "x-fal-target-url": "https://attacker.example",
+                    "x-fal-cdn-authorization": "Bearer leaked-cdn",
                 ]
             )
         )
@@ -111,6 +112,7 @@ final class ClientRequestTests: XCTestCase {
         XCTAssertNil(request.value(forHTTPHeaderField: "cookie"))
         XCTAssertNil(request.value(forHTTPHeaderField: "host"))
         XCTAssertEqual(request.value(forHTTPHeaderField: "x-fal-target-url"), "https://fal.run/fal-ai/test")
+        XCTAssertNil(request.value(forHTTPHeaderField: "x-fal-cdn-authorization"))
     }
 
     func testProxyKeyRequestsDoNotResolveRawCredentialsWhenAuthorizationIsSuppressed() async throws {

@@ -257,7 +257,8 @@ private extension String {
              "proxy-authorization",
              "cookie",
              "host",
-             "x-fal-target-url":
+             "x-fal-target-url",
+             "x-fal-cdn-authorization":
             return true
         default:
             return false
