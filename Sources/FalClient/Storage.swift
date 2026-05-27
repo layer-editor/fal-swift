@@ -451,15 +451,17 @@ struct StorageClient: Storage {
         let token = try await fetchCDNToken()
         let fileName = options.normalizedFileName(for: type)
         let uploadUrlString = "\(token.baseURL.trimmingSuffix("/"))/files/upload"
-        guard let url = URL.safeFalDirectCDNV3UploadURL(from: uploadUrlString) else {
+        guard let cdnURL = URL.safeFalDirectCDNV3UploadURL(from: uploadUrlString) else {
             throw FalError.invalidUrl(url: uploadUrlString.redactedURLForDescription)
         }
+        let routing = try resolveDirectCDNUploadRouting(target: cdnURL)
 
-        var request = URLRequest(url: url)
+        var request = URLRequest(url: routing.url)
         request.httpMethod = "POST"
         request.httpBody = data
         request.setValue(type.mimeType, forHTTPHeaderField: "Content-Type")
         request.setValue(String(data.count), forHTTPHeaderField: "Content-Length")
+        applyProxyHeaders(on: &request, target: cdnURL)
         setCDNAuthorizationHeader(on: &request, token: token)
         request.setValue(fileName, forHTTPHeaderField: "X-Fal-File-Name")
         if let objectLifecyclePreference = options.objectLifecyclePreference {
@@ -470,7 +472,7 @@ struct StorageClient: Storage {
 
         let response = try await client.resolvedHTTPTransport.data(
             for: request,
-            validatingRedirectsWith: { URL.safeFalDirectCDNV3UploadURL($0) }
+            validatingRedirectsWith: routing.redirectValidator
         )
         try client.checkResponseStatus(for: response.response, withData: response.data)
         let uploadResponse = try JSONDecoder().decode(DirectStorageUploadResponse.self, from: response.data)
@@ -517,12 +519,14 @@ struct StorageClient: Storage {
         options: StorageUploadOptions
     ) async throws -> MultipartStorageUploadResponse {
         let uploadUrlString = "\(token.baseURL.trimmingSuffix("/"))/files/upload/multipart"
-        guard let url = URL.safeFalDirectCDNV3UploadURL(from: uploadUrlString) else {
+        guard let cdnURL = URL.safeFalDirectCDNV3UploadURL(from: uploadUrlString) else {
             throw FalError.invalidUrl(url: uploadUrlString.redactedURLForDescription)
         }
+        let routing = try resolveDirectCDNUploadRouting(target: cdnURL)
 
-        var request = URLRequest(url: url)
+        var request = URLRequest(url: routing.url)
         request.httpMethod = "POST"
+        applyProxyHeaders(on: &request, target: cdnURL)
         setCDNAuthorizationHeader(on: &request, token: token)
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue(type.mimeType, forHTTPHeaderField: "Content-Type")
@@ -535,7 +539,7 @@ struct StorageClient: Storage {
 
         let response = try await client.resolvedHTTPTransport.data(
             for: request,
-            validatingRedirectsWith: { URL.safeFalDirectCDNV3UploadURL($0) }
+            validatingRedirectsWith: routing.redirectValidator
         )
         try client.checkResponseStatus(for: response.response, withData: response.data)
         let upload = try JSONDecoder().decode(MultipartStorageUploadResponse.self, from: response.data)
@@ -553,13 +557,15 @@ struct StorageClient: Storage {
         type: FileType
     ) async throws -> String {
         let uploadUrlString = "\(upload.accessURL.trimmingSuffix("/"))/multipart/\(upload.uploadID)/\(partNumber)"
-        guard let url = URL.safeFalDirectCDNV3UploadURL(from: uploadUrlString) else {
+        guard let cdnURL = URL.safeFalDirectCDNV3UploadURL(from: uploadUrlString) else {
             throw FalError.invalidUrl(url: uploadUrlString.redactedURLForDescription)
         }
+        let routing = try resolveDirectCDNUploadRouting(target: cdnURL)
 
-        var request = URLRequest(url: url)
+        var request = URLRequest(url: routing.url)
         request.httpMethod = "PUT"
         request.httpBody = data
+        applyProxyHeaders(on: &request, target: cdnURL)
         setCDNAuthorizationHeader(on: &request, token: token)
         request.setValue(type.mimeType, forHTTPHeaderField: "Content-Type")
         request.setValue(String(data.count), forHTTPHeaderField: "Content-Length")
@@ -568,7 +574,7 @@ struct StorageClient: Storage {
         let response = try await retrying(policy: .transientRequest) {
             let response = try await client.resolvedHTTPTransport.data(
                 for: request,
-                validatingRedirectsWith: { URL.safeFalDirectCDNV3UploadURL($0) }
+                validatingRedirectsWith: routing.redirectValidator
             )
             do {
                 try client.checkResponseStatus(for: response.response, withData: response.data)
@@ -591,20 +597,22 @@ struct StorageClient: Storage {
         parts: [MultipartStorageUploadPart]
     ) async throws {
         let uploadUrlString = "\(upload.accessURL.trimmingSuffix("/"))/multipart/\(upload.uploadID)/complete"
-        guard let url = URL.safeFalDirectCDNV3UploadURL(from: uploadUrlString) else {
+        guard let cdnURL = URL.safeFalDirectCDNV3UploadURL(from: uploadUrlString) else {
             throw FalError.invalidUrl(url: uploadUrlString.redactedURLForDescription)
         }
+        let routing = try resolveDirectCDNUploadRouting(target: cdnURL)
 
-        var request = URLRequest(url: url)
+        var request = URLRequest(url: routing.url)
         request.httpMethod = "POST"
         request.httpBody = try JSONEncoder().encode(CompleteMultipartStorageUploadRequest(parts: parts))
+        applyProxyHeaders(on: &request, target: cdnURL)
         setCDNAuthorizationHeader(on: &request, token: token)
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         try await retrying(policy: .transientRequest) {
             let response = try await client.resolvedHTTPTransport.data(
                 for: request,
-                validatingRedirectsWith: { URL.safeFalDirectCDNV3UploadURL($0) }
+                validatingRedirectsWith: routing.redirectValidator
             )
             do {
                 try client.checkResponseStatus(for: response.response, withData: response.data)
@@ -622,6 +630,42 @@ struct StorageClient: Storage {
         // without colliding with the caller's auth.
         let headerName = client.config.requestProxy != nil ? "x-fal-cdn-authorization" : "Authorization"
         request.setValue(bearer, forHTTPHeaderField: headerName)
+    }
+
+    private struct DirectCDNUploadRouting {
+        let url: URL
+        let redirectValidator: @Sendable (URL) -> Bool
+    }
+
+    private func resolveDirectCDNUploadRouting(target cdnURL: URL) throws -> DirectCDNUploadRouting {
+        guard let proxyString = client.config.requestProxy else {
+            return DirectCDNUploadRouting(
+                url: cdnURL,
+                redirectValidator: { URL.safeFalDirectCDNV3UploadURL($0) }
+            )
+        }
+        guard let proxyURL = URL(string: proxyString),
+              URL.safeExternalHTTPSURL(proxyURL)
+        else {
+            throw FalError.invalidUrl(url: proxyString.redactedURLForDescription)
+        }
+        let proxyHost = proxyURL.host
+        return DirectCDNUploadRouting(
+            url: proxyURL,
+            redirectValidator: { redirected in
+                URL.safeExternalHTTPSURL(redirected) && redirected.host == proxyHost
+            }
+        )
+    }
+
+    private func applyProxyHeaders(on request: inout URLRequest, target cdnURL: URL) {
+        guard client.config.requestProxy != nil else {
+            return
+        }
+        request.setValue(cdnURL.absoluteString, forHTTPHeaderField: "x-fal-target-url")
+        if let authValue = client.callerAuthorizationHeaderValue {
+            request.setValue(authValue, forHTTPHeaderField: "Authorization")
+        }
     }
 
     private func fetchCDNToken() async throws -> StorageCDNToken {

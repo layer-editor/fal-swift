@@ -98,17 +98,8 @@ extension Client {
         request.setValue(userAgent, forHTTPHeaderField: "user-agent")
         try options.applyHeaders(to: &request, includeQueuePriority: includeQueuePriority)
 
-        if shouldApplyAuthorizationHeader {
-            let credentials = config.credentials.rawValue
-            if !credentials.isEmpty {
-                let authValue = switch config.authScheme {
-                case .key:
-                    "Key \(credentials)"
-                case .bearer:
-                    "Bearer \(credentials)"
-                }
-                request.setValue(authValue, forHTTPHeaderField: "authorization")
-            }
+        if let authValue = callerAuthorizationHeaderValue {
+            request.setValue(authValue, forHTTPHeaderField: "authorization")
         }
 
         if config.requestProxy != nil {
@@ -116,6 +107,22 @@ extension Client {
         }
 
         return request
+    }
+
+    var callerAuthorizationHeaderValue: String? {
+        guard shouldApplyAuthorizationHeader else {
+            return nil
+        }
+        let credentials = config.credentials.rawValue
+        guard !credentials.isEmpty else {
+            return nil
+        }
+        switch config.authScheme {
+        case .key:
+            return "Key \(credentials)"
+        case .bearer:
+            return "Bearer \(credentials)"
+        }
     }
 
     private var shouldApplyAuthorizationHeader: Bool {
