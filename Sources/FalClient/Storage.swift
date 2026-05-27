@@ -460,7 +460,7 @@ struct StorageClient: Storage {
         request.httpBody = data
         request.setValue(type.mimeType, forHTTPHeaderField: "Content-Type")
         request.setValue(String(data.count), forHTTPHeaderField: "Content-Length")
-        request.setValue("\(token.tokenType) \(token.token)", forHTTPHeaderField: "Authorization")
+        setCDNAuthorizationHeader(on: &request, token: token)
         request.setValue(fileName, forHTTPHeaderField: "X-Fal-File-Name")
         if let objectLifecyclePreference = options.objectLifecyclePreference {
             let lifecycleHeader = try objectLifecyclePreference.headerValue()
@@ -523,7 +523,7 @@ struct StorageClient: Storage {
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.setValue("\(token.tokenType) \(token.token)", forHTTPHeaderField: "Authorization")
+        setCDNAuthorizationHeader(on: &request, token: token)
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue(type.mimeType, forHTTPHeaderField: "Content-Type")
         request.setValue(fileName, forHTTPHeaderField: "X-Fal-File-Name")
@@ -560,7 +560,7 @@ struct StorageClient: Storage {
         var request = URLRequest(url: url)
         request.httpMethod = "PUT"
         request.httpBody = data
-        request.setValue("\(token.tokenType) \(token.token)", forHTTPHeaderField: "Authorization")
+        setCDNAuthorizationHeader(on: &request, token: token)
         request.setValue(type.mimeType, forHTTPHeaderField: "Content-Type")
         request.setValue(String(data.count), forHTTPHeaderField: "Content-Length")
         request.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
@@ -598,7 +598,7 @@ struct StorageClient: Storage {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.httpBody = try JSONEncoder().encode(CompleteMultipartStorageUploadRequest(parts: parts))
-        request.setValue("\(token.tokenType) \(token.token)", forHTTPHeaderField: "Authorization")
+        setCDNAuthorizationHeader(on: &request, token: token)
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         try await retrying(policy: .transientRequest) {
@@ -612,6 +612,16 @@ struct StorageClient: Storage {
                 throw TransientStorageUploadError.nonTerminal(falError)
             }
         }
+    }
+
+    private func setCDNAuthorizationHeader(on request: inout URLRequest, token: StorageCDNToken) {
+        let bearer = "\(token.tokenType) \(token.token)"
+        // When the caller routes through their own proxy, the proxy's gateway typically validates
+        // a caller-supplied JWT on `Authorization`. Sending the CDN bearer on a separate header
+        // lets the gateway forward it (relocating it back to `Authorization` on the outbound hop)
+        // without colliding with the caller's auth.
+        let headerName = client.config.requestProxy != nil ? "x-fal-cdn-authorization" : "Authorization"
+        request.setValue(bearer, forHTTPHeaderField: headerName)
     }
 
     private func fetchCDNToken() async throws -> StorageCDNToken {

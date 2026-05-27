@@ -670,6 +670,155 @@ final class StorageTests: XCTestCase {
         XCTAssertEqual(uploadRequest.value(forHTTPHeaderField: "X-Fal-Object-Lifecycle-Preference"), #"{"expiration_duration_seconds":3600}"#)
     }
 
+    func testDirectFalCDNV3UploadSendsCDNAuthorizationHeaderWhenProxyConfigured() async throws {
+        let image = Data("image".utf8)
+        let proxyURL = "https://proxy.example.com/api/fal/proxy"
+        let transport = RecordingHTTPTransport { request in
+            switch request.value(forHTTPHeaderField: "x-fal-target-url") ?? request.url?.absoluteString {
+            case "https://rest.fal.ai/storage/auth/token?storage_type=fal-cdn-v3":
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!
+                let data = """
+                {
+                  "token": "cdn-token",
+                  "token_type": "Bearer",
+                  "base_url": "https://v3.fal.media",
+                  "expires_at": "2026-05-19T12:00:00+00:00"
+                }
+                """.data(using: .utf8)!
+                return HTTPTransportResponse(data: data, response: response)
+            case "https://v3.fal.media/files/upload":
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!
+                let data = #"{"access_url":"https://v3.fal.media/files/rabbit/proxied.png"}"#.data(using: .utf8)!
+                return HTTPTransportResponse(data: data, response: response)
+            default:
+                XCTFail("Unexpected request to \(request.url?.absoluteString ?? "nil")")
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 500,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!
+                return HTTPTransportResponse(data: Data(), response: response)
+            }
+        }
+        let storage = StorageClient(client: StorageTestClient(
+            config: ClientConfig(
+                credentials: .keyPair("test-key:test-secret"),
+                requestProxy: proxyURL
+            ),
+            httpTransport: transport
+        ))
+
+        let fileUrl = try await storage.upload(
+            data: image,
+            ofType: .imagePng,
+            options: .init(repository: .directFalCDNV3)
+        )
+
+        XCTAssertEqual(fileUrl, "https://v3.fal.media/files/rabbit/proxied.png")
+        let uploadRequest = try XCTUnwrap(transport.requests.last)
+        XCTAssertEqual(uploadRequest.url?.absoluteString, "https://v3.fal.media/files/upload")
+        XCTAssertEqual(uploadRequest.value(forHTTPHeaderField: "x-fal-cdn-authorization"), "Bearer cdn-token")
+        XCTAssertNil(uploadRequest.value(forHTTPHeaderField: "Authorization"))
+    }
+
+    func testDirectFalCDNV3MultipartUploadSendsCDNAuthorizationHeaderWhenProxyConfigured() async throws {
+        let data = Data("abcdefgh".utf8)
+        let proxyURL = "https://proxy.example.com/api/fal/proxy"
+        let transport = RecordingHTTPTransport { request in
+            switch request.value(forHTTPHeaderField: "x-fal-target-url") ?? request.url?.absoluteString {
+            case "https://rest.fal.ai/storage/auth/token?storage_type=fal-cdn-v3":
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!
+                let data = """
+                {
+                  "token": "cdn-token",
+                  "token_type": "Bearer",
+                  "base_url": "https://v3.fal.media",
+                  "expires_at": "2026-05-19T12:00:00+00:00"
+                }
+                """.data(using: .utf8)!
+                return HTTPTransportResponse(data: data, response: response)
+            case "https://v3.fal.media/files/upload/multipart":
+                XCTAssertEqual(request.value(forHTTPHeaderField: "x-fal-cdn-authorization"), "Bearer cdn-token")
+                XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!
+                let data = #"{"access_url":"https://v3.fal.media/files/rabbit/proxied-multipart.png","uploadId":"upload-xyz"}"#.data(using: .utf8)!
+                return HTTPTransportResponse(data: data, response: response)
+            case "https://v3.fal.media/files/rabbit/proxied-multipart.png/multipart/upload-xyz/1",
+                 "https://v3.fal.media/files/rabbit/proxied-multipart.png/multipart/upload-xyz/2",
+                 "https://v3.fal.media/files/rabbit/proxied-multipart.png/multipart/upload-xyz/3":
+                XCTAssertEqual(request.value(forHTTPHeaderField: "x-fal-cdn-authorization"), "Bearer cdn-token")
+                XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
+                let partNumber = request.url!.lastPathComponent
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: ["ETag": "etag-\(partNumber)"]
+                )!
+                return HTTPTransportResponse(data: Data(), response: response)
+            case "https://v3.fal.media/files/rabbit/proxied-multipart.png/multipart/upload-xyz/complete":
+                XCTAssertEqual(request.value(forHTTPHeaderField: "x-fal-cdn-authorization"), "Bearer cdn-token")
+                XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!
+                return HTTPTransportResponse(data: Data(), response: response)
+            default:
+                XCTFail("Unexpected request to \(request.url?.absoluteString ?? "nil")")
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 500,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!
+                return HTTPTransportResponse(data: Data(), response: response)
+            }
+        }
+        let storage = StorageClient(client: StorageTestClient(
+            config: ClientConfig(
+                credentials: .keyPair("test-key:test-secret"),
+                requestProxy: proxyURL
+            ),
+            httpTransport: transport
+        ))
+
+        let fileURL = try await storage.upload(
+            data: data,
+            ofType: .imagePng,
+            options: .init(
+                fileName: "proxied-multipart.png",
+                repository: .directFalCDNV3,
+                multipartUpload: .init(thresholdBytes: 4, chunkSizeBytes: 3)
+            )
+        )
+
+        XCTAssertEqual(fileURL, "https://v3.fal.media/files/rabbit/proxied-multipart.png")
+    }
+
     func testDirectFalCDNV3UploadRejectsNonFalTokenBaseURL() async throws {
         let transport = RecordingHTTPTransport { request in
             XCTAssertEqual(request.url?.absoluteString, "https://rest.fal.ai/storage/auth/token?storage_type=fal-cdn-v3")
