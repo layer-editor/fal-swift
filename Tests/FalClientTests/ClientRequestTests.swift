@@ -317,7 +317,10 @@ final class ClientRequestTests: XCTestCase {
         _ = try await queue.status("fal-ai/flux/schnell", of: "request-id")
 
         let request = try XCTUnwrap(transport.requests.first)
-        XCTAssertEqual(request.url?.path, "/fal-ai/flux/schnell/requests/request-id/status")
+        // ``AppId.parse(...).queueBasePath`` strips the trailing variant
+        // (``schnell``) per a6dc90a — Fal serves queue status under the
+        // parent model, not the variant path.
+        XCTAssertEqual(request.url?.path, "/fal-ai/flux/requests/request-id/status")
         let components = try XCTUnwrap(URLComponents(url: try XCTUnwrap(request.url), resolvingAgainstBaseURL: false))
         let queryItems = Dictionary(uniqueKeysWithValues: (components.queryItems ?? []).map { ($0.name, $0.value) })
         XCTAssertEqual(queryItems["logs"], "0")
@@ -433,9 +436,10 @@ final class ClientRequestTests: XCTestCase {
         let components = try XCTUnwrap(URLComponents(url: try XCTUnwrap(request.url), resolvingAgainstBaseURL: false))
         let queryItems = Dictionary(uniqueKeysWithValues: (components.queryItems ?? []).map { ($0.name, $0.value) })
 
+        // Trailing variant (``schnell``) stripped from queueBasePath per a6dc90a.
         XCTAssertEqual(
             components.percentEncodedPath,
-            "/fal-ai/flux/schnell/requests/folder%2Frequest%3Fx%3D1%23frag%2E/status"
+            "/fal-ai/flux/requests/folder%2Frequest%3Fx%3D1%23frag%2E/status"
         )
         XCTAssertEqual(queryItems["logs"], "1")
         XCTAssertFalse(queryItems.keys.contains("x"))
@@ -474,7 +478,10 @@ final class ClientRequestTests: XCTestCase {
         let components = try XCTUnwrap(URLComponents(url: try XCTUnwrap(request.url), resolvingAgainstBaseURL: false))
         let queryItems = Dictionary(uniqueKeysWithValues: (components.queryItems ?? []).map { ($0.name, $0.value) })
 
-        XCTAssertEqual(request.url?.path, "/fal-ai/flux/schnell/requests/request-id/status")
+        // Trailing variant (``schnell``) stripped from queueBasePath per a6dc90a;
+        // the response_url / status_url / cancel_url payload fields are mirrored
+        // back from the server verbatim and intentionally retain the variant.
+        XCTAssertEqual(request.url?.path, "/fal-ai/flux/requests/request-id/status")
         XCTAssertEqual(queryItems["logs"], "1")
         XCTAssertEqual(detail.requestId, "request-id")
         XCTAssertEqual(detail.responseUrl, "https://queue.fal.run/fal-ai/flux/schnell/requests/request-id")
@@ -599,7 +606,8 @@ final class ClientRequestTests: XCTestCase {
         let _: RequestOutput = try await queue.response("fal-ai/flux/schnell", of: "request-id")
 
         let request = try XCTUnwrap(transport.requests.first)
-        XCTAssertEqual(request.url?.path, "/fal-ai/flux/schnell/requests/request-id")
+        // Trailing variant (``schnell``) stripped from queueBasePath per a6dc90a.
+        XCTAssertEqual(request.url?.path, "/fal-ai/flux/requests/request-id")
     }
 
     func testQueueResponseRetriesTransientTransportErrors() async throws {
@@ -648,7 +656,8 @@ final class ClientRequestTests: XCTestCase {
 
         let request = try XCTUnwrap(transport.requests.first)
         let components = try XCTUnwrap(URLComponents(url: try XCTUnwrap(request.url), resolvingAgainstBaseURL: false))
-        XCTAssertEqual(components.percentEncodedPath, "/fal-ai/flux/schnell/requests/%2E%2E%2Frequest%23id")
+        // Trailing variant (``schnell``) stripped from queueBasePath per a6dc90a.
+        XCTAssertEqual(components.percentEncodedPath, "/fal-ai/flux/requests/%2E%2E%2Frequest%23id")
         XCTAssertNil(components.query)
     }
 
@@ -671,7 +680,8 @@ final class ClientRequestTests: XCTestCase {
 
         let request = try XCTUnwrap(transport.requests.first)
         XCTAssertEqual(request.httpMethod, "PUT")
-        XCTAssertEqual(request.url?.path, "/fal-ai/flux/schnell/requests/request-id/cancel")
+        // Trailing variant (``schnell``) stripped from queueBasePath per a6dc90a.
+        XCTAssertEqual(request.url?.path, "/fal-ai/flux/requests/request-id/cancel")
     }
 
     func testQueueCancelThrowsWhenImplementationDoesNotSupportCancellation() async throws {
@@ -705,9 +715,10 @@ final class ClientRequestTests: XCTestCase {
         let request = try XCTUnwrap(transport.requests.first)
         let components = try XCTUnwrap(URLComponents(url: try XCTUnwrap(request.url), resolvingAgainstBaseURL: false))
         XCTAssertEqual(request.httpMethod, "PUT")
+        // Trailing variant (``schnell``) stripped from queueBasePath per a6dc90a.
         XCTAssertEqual(
             components.percentEncodedPath,
-            "/fal-ai/flux/schnell/requests/folder%2Frequest%3Fx%3D1%23frag%2E/cancel"
+            "/fal-ai/flux/requests/folder%2Frequest%3Fx%3D1%23frag%2E/cancel"
         )
         XCTAssertNil(components.query)
     }
