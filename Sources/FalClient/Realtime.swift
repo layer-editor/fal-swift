@@ -32,7 +32,7 @@ private final class ThrottleState: @unchecked Sendable {
 }
 
 public enum FalRealtimeError: Error {
-    case connectionError(code: Int? = nil)
+    case connectionError(code: Int? = nil, reason: String? = nil)
     case unauthorized
     case invalidInput
     case invalidResult(requestId: String? = nil, causedBy: Error? = nil)
@@ -42,8 +42,9 @@ public enum FalRealtimeError: Error {
 extension FalRealtimeError: LocalizedError {
     public var errorDescription: String? {
         switch self {
-        case let .connectionError(code):
-            return NSLocalizedString("Connection error (code: \(String(describing: code)))", comment: "FalRealtimeError.connectionError")
+        case let .connectionError(code, reason):
+            let reasonSuffix = reason.map { ", reason: \($0)" } ?? ""
+            return NSLocalizedString("Connection error (code: \(String(describing: code))\(reasonSuffix))", comment: "FalRealtimeError.connectionError")
         case .unauthorized:
             return NSLocalizedString("Unauthorized", comment: "FalRealtimeError.unauthorized")
         case .invalidInput:
@@ -524,15 +525,16 @@ final class WebSocketConnection: NSObject, URLSessionWebSocketDelegate, @uncheck
         _: URLSession,
         webSocketTask _: URLSessionWebSocketTask,
         didCloseWith code: URLSessionWebSocketTask.CloseCode,
-        reason _: Data?
+        reason: Data?
     ) {
-        realtimeSocketDidClose(with: code)
+        let reasonString = reason.flatMap { String(data: $0, encoding: .utf8) }
+        realtimeSocketDidClose(with: code, reason: reasonString)
     }
 
-    func realtimeSocketDidClose(with code: URLSessionWebSocketTask.CloseCode) {
+    func realtimeSocketDidClose(with code: URLSessionWebSocketTask.CloseCode, reason: String? = nil) {
         stateQueue.async {
             if code != .normalClosure {
-                self.onError(FalRealtimeError.connectionError(code: code.rawValue))
+                self.onError(FalRealtimeError.connectionError(code: code.rawValue, reason: reason))
             }
             self.task = nil
             self.onClose()
