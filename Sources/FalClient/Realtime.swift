@@ -104,11 +104,10 @@ public class BaseRealtimeConnection<Input: Encodable>: @unchecked Sendable {
 
     /// Sends a message to the app.
     public func send(_ input: Input) throws {
-        if hasBinaryField(input) {
-            try sendBinary(input)
-        } else {
-            try sendJSON(input)
-        }
+        // fal's realtime endpoints expect msgpack frames and silently ignore JSON
+        // text frames (the connection stays open but no result is produced).
+        // fal-js defaults realtime outgoing messages to msgpack for the same reason.
+        try sendBinary(input)
     }
 
     func sendJSON(_ data: Input) throws {
@@ -167,9 +166,10 @@ private func realtimePath(forApp app: String, requestedPath: String?) throws -> 
     if LegacyApps.contains(appAlias) || !app.contains("/") {
         return "/ws"
     }
-    if (try? AppId.parse(id: app).path) != nil {
-        return nil
-    }
+    // fal-js appends "/realtime" for ALL non-legacy apps, including those with a
+    // sub-path (e.g. fast-lcm-diffusion/image-to-image → .../image-to-image/realtime).
+    // The previous `path != nil → nil` skipped it, so sub-path apps connected to a
+    // non-realtime socket that accepted the connection but never returned results.
     return "/realtime"
 }
 
