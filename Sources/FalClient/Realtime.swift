@@ -203,14 +203,13 @@ private func normalizedRealtimePath(_ path: String) throws -> String {
     return "/" + segments.joined(separator: "/")
 }
 
-private func realtimeTokenAppIdentifier(forApp app: String, path requestedPath: String?) throws -> String {
-    let appPath = ((try? AppId.parse(id: app).endpointPath) ?? app).trimmingRealtimeSlashes
-    guard let path = try realtimePath(forApp: app, requestedPath: requestedPath)?.trimmingRealtimeSlashes,
-          !path.isEmpty
-    else {
-        return appPath
-    }
-    return "\(appPath)/\(path)"
+private func realtimeTokenAppIdentifier(forApp app: String, path _: String?) throws -> String {
+    // fal scopes realtime JWTs by app ALIAS (the middle id component) — the owner
+    // prefix and any path suffix are stripped. This matches fal-js
+    // `getTemporaryAuthToken`, which sends `allowed_apps: [appId.alias]`. Sending the
+    // full endpoint path (or appending the realtime path like `/ws` or `/realtime`)
+    // produces a token fal rejects at the WS handshake with `1008 Forbidden`.
+    (try? AppId.parse(id: app).appAlias) ?? app
 }
 
 private extension String {
