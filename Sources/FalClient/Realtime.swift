@@ -394,10 +394,14 @@ final class WebSocketConnection: NSObject, URLSessionWebSocketDelegate, @uncheck
 
         Task {
             do {
-                let url = "https://rest.fal.ai/tokens/realtime"
+                // The current fal REST contract mints realtime JWTs at `/tokens/`
+                // with `token_expiration` (seconds). The older `/tokens/realtime`
+                // + `duration` shape now 422s with `{"loc":["body","app"],
+                // "msg":"Field required"}`. Matches fal-js `getTemporaryAuthToken`.
+                let url = "https://rest.fal.ai/tokens/"
                 let body: Payload = [
                     "allowed_apps": [.string(try realtimeTokenAppIdentifier(forApp: app, path: path))],
-                    "duration": .int(TokenDurationSeconds),
+                    "token_expiration": .int(TokenDurationSeconds),
                 ]
                 let response = try await self.client.sendRequest(
                     to: url,
