@@ -32,7 +32,7 @@ private final class ThrottleState: @unchecked Sendable {
 }
 
 public enum FalRealtimeError: Error {
-    case connectionError(code: Int? = nil)
+    case connectionError(code: Int? = nil, reason: String? = nil)
     case unauthorized
     case invalidInput
     case invalidResult(requestId: String? = nil, causedBy: Error? = nil)
@@ -42,8 +42,9 @@ public enum FalRealtimeError: Error {
 extension FalRealtimeError: LocalizedError {
     public var errorDescription: String? {
         switch self {
-        case let .connectionError(code):
-            return NSLocalizedString("Connection error (code: \(String(describing: code)))", comment: "FalRealtimeError.connectionError")
+        case let .connectionError(code, reason):
+            let reasonSuffix = reason.map { ", reason: \($0)" } ?? ""
+            return NSLocalizedString("Connection error (code: \(String(describing: code))\(reasonSuffix))", comment: "FalRealtimeError.connectionError")
         case .unauthorized:
             return NSLocalizedString("Unauthorized", comment: "FalRealtimeError.unauthorized")
         case .invalidInput:
@@ -103,11 +104,10 @@ public class BaseRealtimeConnection<Input: Encodable>: @unchecked Sendable {
 
     /// Sends a message to the app.
     public func send(_ input: Input) throws {
-        if hasBinaryField(input) {
-            try sendBinary(input)
-        } else {
-            try sendJSON(input)
-        }
+        // fal's realtime endpoints expect msgpack frames and silently ignore JSON
+        // text frames (the connection stays open but no result is produced).
+        // fal-js defaults realtime outgoing messages to msgpack for the same reason.
+        try sendBinary(input)
     }
 
     func sendJSON(_ data: Input) throws {
@@ -166,9 +166,10 @@ private func realtimePath(forApp app: String, requestedPath: String?) throws -> 
     if LegacyApps.contains(appAlias) || !app.contains("/") {
         return "/ws"
     }
-    if (try? AppId.parse(id: app).path) != nil {
-        return nil
-    }
+    // fal-js appends "/realtime" for ALL non-legacy apps, including those with a
+    // sub-path (e.g. fast-lcm-diffusion/image-to-image → .../image-to-image/realtime).
+    // The previous `path != nil → nil` skipped it, so sub-path apps connected to a
+    // non-realtime socket that accepted the connection but never returned results.
     return "/realtime"
 }
 
@@ -202,14 +203,13 @@ private func normalizedRealtimePath(_ path: String) throws -> String {
     return "/" + segments.joined(separator: "/")
 }
 
-private func realtimeTokenAppIdentifier(forApp app: String, path requestedPath: String?) throws -> String {
-    let appPath = ((try? AppId.parse(id: app).endpointPath) ?? app).trimmingRealtimeSlashes
-    guard let path = try realtimePath(forApp: app, requestedPath: requestedPath)?.trimmingRealtimeSlashes,
-          !path.isEmpty
-    else {
-        return appPath
-    }
-    return "\(appPath)/\(path)"
+private func realtimeTokenAppIdentifier(forApp app: String, path _: String?) throws -> String {
+    // fal scopes realtime JWTs by app ALIAS (the middle id component) — the owner
+    // prefix and any path suffix are stripped. This matches fal-js
+    // `getTemporaryAuthToken`, which sends `allowed_apps: [appId.alias]`. Sending the
+    // full endpoint path (or appending the realtime path like `/ws` or `/realtime`)
+    // produces a token fal rejects at the WS handshake with `1008 Forbidden`.
+    (try? AppId.parse(id: app).appAlias) ?? app
 }
 
 private extension String {
@@ -394,10 +394,14 @@ final class WebSocketConnection: NSObject, URLSessionWebSocketDelegate, @uncheck
 
         Task {
             do {
-                let url = "https://rest.fal.ai/tokens/realtime"
+                // The current fal REST contract mints realtime JWTs at `/tokens/`
+                // with `token_expiration` (seconds). The older `/tokens/realtime`
+                // + `duration` shape now 422s with `{"loc":["body","app"],
+                // "msg":"Field required"}`. Matches fal-js `getTemporaryAuthToken`.
+                let url = "https://rest.fal.ai/tokens/"
                 let body: Payload = [
                     "allowed_apps": [.string(try realtimeTokenAppIdentifier(forApp: app, path: path))],
-                    "duration": .int(TokenDurationSeconds),
+                    "token_expiration": .int(TokenDurationSeconds),
                 ]
                 let response = try await self.client.sendRequest(
                     to: url,
@@ -520,15 +524,16 @@ final class WebSocketConnection: NSObject, URLSessionWebSocketDelegate, @uncheck
         _: URLSession,
         webSocketTask _: URLSessionWebSocketTask,
         didCloseWith code: URLSessionWebSocketTask.CloseCode,
-        reason _: Data?
+        reason: Data?
     ) {
-        realtimeSocketDidClose(with: code)
+        let reasonString = reason.flatMap { String(data: $0, encoding: .utf8) }
+        realtimeSocketDidClose(with: code, reason: reasonString)
     }
 
-    func realtimeSocketDidClose(with code: URLSessionWebSocketTask.CloseCode) {
+    func realtimeSocketDidClose(with code: URLSessionWebSocketTask.CloseCode, reason: String? = nil) {
         stateQueue.async {
             if code != .normalClosure {
-                self.onError(FalRealtimeError.connectionError(code: code.rawValue))
+                self.onError(FalRealtimeError.connectionError(code: code.rawValue, reason: reason))
             }
             self.task = nil
             self.onClose()
