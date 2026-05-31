@@ -901,7 +901,14 @@ private extension String {
     }
 
     var isAllowedDirectFalCDNV3UploadHost: Bool {
-        isEqualToOrSubdomain(of: "v3.fal.media")
+        // fal's storage-auth-token endpoint returns sharded CDN base URLs —
+        // `v3.fal.media`, `v3b.fal.media`, and other shards/regions — chosen per
+        // request. The host comes from fal's own authenticated token response
+        // (and, under a `requestProxy`, is further constrained server-side to
+        // `*.fal.media`), so accept any `fal.media` CDN host instead of pinning a
+        // single shard. Pinning `v3.fal.media` made every upload routed to a
+        // non-`v3` shard fail with `FalError.invalidUrl`.
+        isEqualToOrSubdomain(of: "fal.media")
     }
 
     var isAllowedDirectFalMediaUploadHost: Bool {

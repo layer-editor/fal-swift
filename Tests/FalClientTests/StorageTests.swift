@@ -670,6 +670,56 @@ final class StorageTests: XCTestCase {
         XCTAssertEqual(uploadRequest.value(forHTTPHeaderField: "X-Fal-Object-Lifecycle-Preference"), #"{"expiration_duration_seconds":3600}"#)
     }
 
+    func testDirectFalCDNV3UploadAcceptsShardedTokenBaseURL() async throws {
+        // Regression: fal's storage-auth-token endpoint returns sharded CDN hosts
+        // (e.g. `v3b.fal.media`, not just `v3.fal.media`). The upload must proceed
+        // to whatever host the token names rather than throwing
+        // `FalError.invalidUrl` from the upload-host allow-list.
+        let image = Data("image".utf8)
+        let transport = RecordingHTTPTransport { request in
+            if request.url?.absoluteString == "https://rest.fal.ai/storage/auth/token?storage_type=fal-cdn-v3" {
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!
+                let data = """
+                {
+                  "token": "cdn-token",
+                  "token_type": "Bearer",
+                  "base_url": "https://v3b.fal.media",
+                  "expires_at": "2026-05-19T12:00:00+00:00"
+                }
+                """.data(using: .utf8)!
+                return HTTPTransportResponse(data: data, response: response)
+            }
+
+            XCTAssertEqual(request.url?.absoluteString, "https://v3b.fal.media/files/upload")
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: nil
+            )!
+            let data = #"{"access_url":"https://v3b.fal.media/files/rabbit/result.png"}"#.data(using: .utf8)!
+            return HTTPTransportResponse(data: data, response: response)
+        }
+        let storage = StorageClient(client: StorageTestClient(httpTransport: transport))
+
+        let fileUrl = try await storage.upload(
+            data: image,
+            ofType: .imagePng,
+            options: .init(repository: .directFalCDNV3)
+        )
+
+        XCTAssertEqual(fileUrl, "https://v3b.fal.media/files/rabbit/result.png")
+        XCTAssertEqual(transport.requests.map { $0.url?.absoluteString }, [
+            "https://rest.fal.ai/storage/auth/token?storage_type=fal-cdn-v3",
+            "https://v3b.fal.media/files/upload",
+        ])
+    }
+
     func testDirectFalCDNV3UploadRoutesThroughProxyAndPreservesCallerAuth() async throws {
         let image = Data("image".utf8)
         let proxyURL = "https://proxy.example.com/api/fal/proxy"
