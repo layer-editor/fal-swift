@@ -19,12 +19,16 @@ public enum WorkflowEventType: String, Codable, Sendable {
 /// Fields shared by every workflow streaming event.
 public protocol WorkflowEvent: Decodable, Sendable {
     /// Identifier of the workflow node the event refers to.
-    var nodeId: String { get }
+    ///
+    /// This is optional because the terminal ``WorkflowOutputEvent`` describes
+    /// the workflow as a whole rather than a single node, so the server omits
+    /// `node_id` from it. The other events always carry one.
+    var nodeId: String? { get }
 }
 
 /// Emitted every time a new step is submitted to execution.
 public struct WorkflowSubmitEvent: WorkflowEvent {
-    public let nodeId: String
+    public let nodeId: String?
     /// Identifier of the app backing the submitted step.
     public let appId: String
     /// Identifier of the queued request for the submitted step.
@@ -39,9 +43,12 @@ public struct WorkflowSubmitEvent: WorkflowEvent {
 
 /// Emitted upon the completion of an individual step within the workflow.
 public struct WorkflowCompletionEvent: WorkflowEvent {
-    public let nodeId: String
+    public let nodeId: String?
     /// Identifier of the app that produced the step result.
-    public let appId: String
+    ///
+    /// Optional: fal's documented completion payload omits `app_id`, so this is
+    /// `nil` unless the server includes it.
+    public let appId: String?
     /// The step's results.
     public let output: Payload
 
@@ -54,7 +61,9 @@ public struct WorkflowCompletionEvent: WorkflowEvent {
 
 /// Emitted when the workflow finishes and the final result is ready.
 public struct WorkflowOutputEvent: WorkflowEvent {
-    public let nodeId: String
+    /// The terminal output event describes the workflow as a whole, so the
+    /// server omits `node_id`; it is `nil` unless a future payload includes it.
+    public let nodeId: String?
     /// The final workflow result.
     public let output: Payload
 
@@ -66,7 +75,7 @@ public struct WorkflowOutputEvent: WorkflowEvent {
 
 /// Emitted when a step fails.
 public struct WorkflowErrorEvent: WorkflowEvent {
-    public let nodeId: String
+    public let nodeId: String?
     /// A human-readable description of the error.
     public let message: String
     /// The underlying error details, carrying `status` and `body`.
@@ -140,7 +149,10 @@ public extension WorkflowEventData {
     }
 
     /// The workflow node this event refers to.
-    var nodeId: String {
+    ///
+    /// `nil` for the terminal ``WorkflowOutputEvent``, which the server emits
+    /// without a `node_id`.
+    var nodeId: String? {
         switch self {
         case let .submit(event): return event.nodeId
         case let .completion(event): return event.nodeId

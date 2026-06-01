@@ -52,6 +52,42 @@ final class WorkflowEventTests: XCTestCase {
         XCTAssertEqual(output.output["images"][0]["url"].stringValue, "https://fal.media/r.png")
     }
 
+    // MARK: - Documented payload shapes
+    //
+    // fal's published workflow contract omits `node_id` from the terminal
+    // `output` event and `app_id` from `completion` events. These regression
+    // tests pin the decoder against those exact shapes so a successful workflow
+    // never fails to decode partway through the stream.
+    // https://fal.ai/docs/model-apis/model-endpoints/workflows
+
+    func testDecodesCompletionEventWithoutAppId() throws {
+        let event = try decode(#"""
+        {"type":"completion","node_id":"stable_diffusion_xl","output":{"seed":6252023,"prompt":"a cute puppy"}}
+        """#)
+
+        guard case let .completion(completion) = event else {
+            return XCTFail("expected completion event, got \(event)")
+        }
+        XCTAssertEqual(event.nodeId, "stable_diffusion_xl")
+        XCTAssertNil(completion.appId)
+        XCTAssertEqual(completion.output["seed"], 6_252_023)
+    }
+
+    func testDecodesTerminalOutputEventWithoutNodeId() throws {
+        let event = try decode(#"""
+        {"type":"output","output":{"images":[{"url":"https://fal.media/result.jpeg","width":1024,"height":1024,"content_type":"image/jpeg"}]}}
+        """#)
+
+        guard case let .output(output) = event else {
+            return XCTFail("expected output event, got \(event)")
+        }
+        XCTAssertEqual(event.type, .output)
+        XCTAssertNil(event.nodeId)
+        XCTAssertNil(output.nodeId)
+        XCTAssertTrue(event.isTerminal)
+        XCTAssertEqual(output.output["images"][0]["url"].stringValue, "https://fal.media/result.jpeg")
+    }
+
     func testDecodesErrorEvent() throws {
         let event = try decode(#"""
         {"type":"error","node_id":"node-2","message":"step failed","error":{"status":500,"body":"boom"}}
@@ -75,8 +111,8 @@ final class WorkflowEventTests: XCTestCase {
     func testStreamDecodesWorkflowEvents() async throws {
         let transport = RecordingHTTPTransport(serverSentEventData: [
             #"{"type":"submit","node_id":"n1","app_id":"fal-ai/flux","request_id":"req-1"}"#,
-            #"{"type":"completion","node_id":"n1","app_id":"fal-ai/flux","output":{"seed":7}}"#,
-            #"{"type":"output","node_id":"n1","output":{"done":true}}"#,
+            #"{"type":"completion","node_id":"n1","output":{"seed":7}}"#,
+            #"{"type":"output","output":{"done":true}}"#,
         ])
         let client = WorkflowTestClient(httpTransport: transport)
 
