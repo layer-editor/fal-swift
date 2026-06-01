@@ -205,10 +205,18 @@ private func normalizedRealtimePath(_ path: String) throws -> String {
 
 private func realtimeTokenAppIdentifier(forApp app: String, path _: String?) throws -> String {
     // fal scopes realtime JWTs by app ALIAS (the middle id component) — the owner
-    // prefix and any path suffix are stripped. This matches fal-js
-    // `getTemporaryAuthToken`, which sends `allowed_apps: [appId.alias]`. Sending the
-    // full endpoint path (or appending the realtime path like `/ws` or `/realtime`)
-    // produces a token fal rejects at the WS handshake with `1008 Forbidden`.
+    // prefix and any path suffix are stripped. This matches the canonical
+    // @fal-ai/client `getTemporaryAuthToken` (src/auth.ts), whose default
+    // provider sends `allowed_apps: [appId.alias]`. Sending the full endpoint
+    // path (or appending the realtime path like `/ws` or `/realtime`) produces a
+    // token fal rejects at the WS handshake with `1008 Forbidden` (verified live).
+    //
+    // This is the only token-mint path the SDK exposes today: there is no public
+    // custom token-provider hook (the `refreshTokenFunction` parameter is
+    // internal/test-only), so the alias scope applies to every realtime
+    // connection, including those routed through a transparent proxy. fal-js
+    // forwards the full `${appId}${resolvedPath}` only to a custom `tokenProvider`;
+    // if such a hook is surfaced here later, per-path scoping can ride on it.
     (try? AppId.parse(id: app).appAlias) ?? app
 }
 
@@ -395,9 +403,16 @@ final class WebSocketConnection: NSObject, URLSessionWebSocketDelegate, @uncheck
         Task {
             do {
                 // The current fal REST contract mints realtime JWTs at `/tokens/`
-                // with `token_expiration` (seconds). The older `/tokens/realtime`
-                // + `duration` shape now 422s with `{"loc":["body","app"],
-                // "msg":"Field required"}`. Matches fal-js `getTemporaryAuthToken`.
+                // with `{ allowed_apps, token_expiration }`, matching the canonical
+                // @fal-ai/client `getTemporaryAuthToken` (src/auth.ts) verbatim:
+                // `POST ${getRestApiUrl()}/tokens/` with
+                // `{ allowed_apps: [appId.alias], token_expiration }` and no
+                // fallback. The older `/tokens/realtime` + `duration` shape now 422s
+                // with `{"loc":["body","app"],"msg":"Field required"}` (verified
+                // live). The fal-docs `/tokens/realtime` example is a JS
+                // `tokenProvider` backend, a pattern this SDK doesn't expose; here
+                // `/tokens/` is the single mint path for every realtime connection
+                // (a transparent proxy just forwards this request to fal unchanged).
                 let url = "https://rest.fal.ai/tokens/"
                 let body: Payload = [
                     "allowed_apps": [.string(try realtimeTokenAppIdentifier(forApp: app, path: path))],
