@@ -34,6 +34,32 @@ let events: AsyncThrowingStream<StreamEvent, Error> = try await fal.stream(
 
 Typed `Encodable` inputs containing `Data` are rejected before request encoding. Use the `Payload` API with `.data` when binary input should be uploaded before the stream request.
 
+## Workflow Events
+
+[Workflow endpoints](https://fal.ai/docs/model-apis/model-endpoints/workflows) stream typed events as the workflow graph executes. Request `WorkflowEventData` from `stream` to decode them by their `type` discriminator:
+
+```swift
+let events: AsyncThrowingStream<WorkflowEventData, Error> = try await fal.stream(
+    "workflows/owner/my-workflow",
+    input: ["prompt": "a glass greenhouse in pencil"]
+)
+
+for try await event in events {
+    switch event {
+    case let .submit(submit):
+        print("step submitted:", submit.nodeId, submit.requestId)
+    case let .completion(step):
+        print("step completed:", step.nodeId, step.output)
+    case let .output(done):
+        print("workflow done:", done.output)
+    case let .error(failure):
+        print("step failed:", failure.message)
+    }
+}
+```
+
+A `submit` event fires for each step queued, `completion` for each step result, `output` once with the final workflow result, and `error` on failure. `output` and `error` are terminal (`event.isTerminal == true`).
+
 ## Custom Paths And Timeout
 
 ```swift
