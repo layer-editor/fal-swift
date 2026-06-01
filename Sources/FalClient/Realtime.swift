@@ -163,14 +163,20 @@ private func realtimePath(forApp app: String, requestedPath: String?) throws -> 
     }
 
     let appAlias = (try? appAlias(fromId: app)) ?? app
-    if LegacyApps.contains(appAlias) || !app.contains("/") {
-        return "/ws"
-    }
+    let defaultPath = LegacyApps.contains(appAlias) || !app.contains("/") ? "/ws" : "/realtime"
     // fal-js appends "/realtime" for ALL non-legacy apps, including those with a
     // sub-path (e.g. fast-lcm-diffusion/image-to-image → .../image-to-image/realtime).
     // The previous `path != nil → nil` skipped it, so sub-path apps connected to a
     // non-realtime socket that accepted the connection but never returned results.
-    return "/realtime"
+    //
+    // Match fal-js `resolveEndpointPath` (src/utils.ts): don't duplicate the
+    // default segment when the app id already ends with it (e.g.
+    // "fal-ai/foo/realtime" → no extra "/realtime"), which would otherwise yield
+    // ".../realtime/realtime".
+    if app.trimmingRealtimeSlashes.hasSuffix(defaultPath) {
+        return nil
+    }
+    return defaultPath
 }
 
 private func normalizedRealtimePath(_ path: String) throws -> String {

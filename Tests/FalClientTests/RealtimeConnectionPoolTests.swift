@@ -384,7 +384,7 @@ final class RealtimeConnectionPoolTests: XCTestCase {
         await fulfillment(of: [receivedError], timeout: 1)
     }
 
-    func testRefreshTokenUsesRealtimeTokenEndpointAndFullEndpointPath() async throws {
+    func testRefreshTokenUsesTokensEndpointWithExpirationAndAliasScope() async throws {
         let transport = CapturingRealtimeHTTPTransport(responseBody: #"{"token":"test-jwt"}"#)
         let client = RealtimeTestClient(
             config: ClientConfig(credentials: .keyPair("key-id:key-secret")),
@@ -410,13 +410,18 @@ final class RealtimeConnectionPoolTests: XCTestCase {
 
         XCTAssertEqual(try result.value?.get(), "test-jwt")
         let request = try XCTUnwrap(transport.capturedRequest)
-        XCTAssertEqual(request.url?.absoluteString, "https://rest.fal.ai/tokens/realtime")
+        // Matches the canonical @fal-ai/client `getTemporaryAuthToken`: POST to
+        // `/tokens/` with `{ allowed_apps: [alias], token_expiration }` and no
+        // `duration` field. The token is scoped to the app ALIAS, not the full
+        // endpoint/ws path — the full path is rejected at the WS handshake (1008).
+        XCTAssertEqual(request.url?.absoluteString, "https://rest.fal.ai/tokens/")
         XCTAssertEqual(request.httpMethod, "POST")
         XCTAssertEqual(request.value(forHTTPHeaderField: "authorization"), "Key key-id:key-secret")
         let body = try XCTUnwrap(request.httpBody)
         let payload = try JSONSerialization.jsonObject(with: body) as? [String: Any]
-        XCTAssertEqual(payload?["duration"] as? Int, 300)
-        XCTAssertEqual(payload?["allowed_apps"] as? [String], ["fal-ai/test/custom-ws"])
+        XCTAssertEqual(payload?["token_expiration"] as? Int, 300)
+        XCTAssertNil(payload?["duration"])
+        XCTAssertEqual(payload?["allowed_apps"] as? [String], ["test"])
     }
 
     func testRefreshTokenRejectsJsonObjectWithoutToken() async throws {
