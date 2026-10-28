@@ -243,8 +243,13 @@ public extension Payload {
         try MsgPackDecoder().decode(Payload.self, from: data)
     }
 
+    /// Object keys are sorted, so equal payloads always encode to the same bytes.
+    /// A `[String: Payload]` has no stable iteration order (Swift seeds each dictionary
+    /// separately), and providers' prompt caches match the request bytes as sent.
     func json() throws -> Data {
-        try JSONEncoder().encode(self)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        return try encoder.encode(self)
     }
 
     func binary() throws -> Data {

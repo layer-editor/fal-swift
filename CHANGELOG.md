@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Request bodies encode object keys in sorted order, so equal inputs always send the same bytes. Unordered keys defeated provider prompt caches that match on request text (OpenAI tool schemas).
 - Modernized queue APIs with detailed submit/status metadata, cancellation, queue status streaming, and detail-aware subscribe helpers.
 - Added Fal model discovery APIs with catalog search, endpoint lookup, optional OpenAPI expansion, queue schema extraction, and broad capability inference for dynamic Apple-client playgrounds.
 - Added direct model SSE streaming with `Payload` and typed `Codable` event decoding.

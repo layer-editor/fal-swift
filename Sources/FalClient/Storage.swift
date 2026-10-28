@@ -882,6 +882,8 @@ func encodeTypedInputRejectingBinaryData<Input: Encodable>(
     configure: (JSONEncoder) -> Void = { _ in }
 ) throws -> Data {
     let encoder = JSONEncoder()
+    // Same bytes for equal inputs, as with `Payload.json()`.
+    encoder.outputFormatting = .sortedKeys
     configure(encoder)
     encoder.dataEncodingStrategy = .custom { _, _ in
         throw FalError.unsupportedInput(message: message)
