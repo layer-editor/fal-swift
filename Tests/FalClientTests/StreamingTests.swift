@@ -69,6 +69,39 @@ final class StreamingTests: XCTestCase {
         XCTAssertEqual(events.map(\.token), ["hel", "lo"])
     }
 
+    func testEqualPayloadsAlwaysSendTheSameSortedBytes() async throws {
+        // A tool schema like the ones chat providers render into the prompt, decoded afresh
+        // for each request the way callers rebuild it: each decode is a new dictionary.
+        let schema = #"{"type":"function","function":{"name":"arrange","parameters":{"type":"object","properties":{"entity_ids":{"type":"array","items":{"type":"string"}},"layout":{"type":"string"},"spacing":{"type":"number"},"style":{"type":"object","properties":{"fill":{"type":"string"},"radius":{"type":"number"}}},"reason":{"type":"string"}},"required":["entity_ids"]}}}"#
+        var bodies = Set<Data>()
+        for _ in 0 ..< 20 {
+            transport = RecordingHTTPTransport(serverSentEventData: [])
+            let client = TestStreamingClient(httpTransport: transport)
+            let tool = try Payload.create(fromJSON: Data(schema.utf8))
+            for try await _ in try await client.stream("fal-ai/chat", input: .dict(["tools": [tool], "stream": true])) {}
+            try bodies.insert(XCTUnwrap(transport.requests.first?.httpBody))
+        }
+
+        XCTAssertEqual(bodies.count, 1, "Equal inputs must send identical bytes")
+        let body = String(decoding: try XCTUnwrap(bodies.first), as: UTF8.self)
+        XCTAssertTrue(body.hasPrefix(#"{"stream":true,"tools":[{"function":{"name":"arrange","parameters":{"properties":{"entity_ids""#))
+        XCTAssertTrue(body.contains(#""layout":{"type":"string"},"reason":{"type":"string"},"spacing""#))
+    }
+
+    func testTypedStreamInputSendsSortedKeys() async throws {
+        transport = RecordingHTTPTransport(serverSentEventData: [])
+        let client = TestStreamingClient(httpTransport: transport)
+
+        let stream: AsyncThrowingStream<TestStreamEvent, Error> = try await client.stream(
+            "fal-ai/text-model",
+            input: ["zeta": 1, "alpha": 2, "mid": 3, "beta": 4, "omega": 5, "gamma": 6, "delta": 7]
+        )
+        for try await _ in stream {}
+
+        let body = try XCTUnwrap(transport.requests.first?.httpBody)
+        XCTAssertEqual(String(decoding: body, as: UTF8.self), #"{"alpha":2,"beta":4,"delta":7,"gamma":6,"mid":3,"omega":5,"zeta":1}"#)
+    }
+
     func testPayloadStreamPreservesHTTPErrorPayload() async throws {
         let errorData = Data(#"{"detail":"stream endpoint unavailable","error_type":"not_streaming"}"#.utf8)
         transport = RecordingHTTPTransport(
